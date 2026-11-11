@@ -23,9 +23,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const sync = new SyncController();
   window.syncCtrl = sync;
   charts.forEach(c => sync.register(c));
-  const drawing = new DrawingManager();
+  const drawing = (window.TERMINAL_ENGINE_V5 && window.DrawingIntegrationV5)
+    ? DrawingIntegrationV5.attach(charts)
+    : new DrawingManager();
   window.drawingMgr = drawing;
-  charts.forEach(c => drawing.bindChart(c));
+  if (!window.TERMINAL_ENGINE_V5 || !window.DrawingIntegrationV5) {
+    charts.forEach(c => drawing.bindChart(c));
+  }
   const grid = $('chart-grid');
   if ([...document.querySelectorAll('.layout-icon-btn')].some(b => b.dataset.layout === saved.layout)) grid.className = saved.layout;
   let active = charts.find(c => c.id === saved.active) || charts[0];
@@ -82,7 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else {chart.runner.view=view;chart.runner.applyView();}
     return true;
   });
-  const indicatorSettingsButton=document.createElement('button');indicatorSettingsButton.id='btn-indicator-settings';indicatorSettingsButton.className='btn-icon';indicatorSettingsButton.textContent='⚙';indicatorSettingsButton.title='Indicator settings';indicatorSettingsButton.setAttribute('aria-label','Active indicator settings');
+  const indicatorSettingsButton=document.createElement('button');indicatorSettingsButton.id='btn-indicator-settings';indicatorSettingsButton.className='btn-icon';indicatorSettingsButton.innerHTML=TerminalIcons.svg('settings');indicatorSettingsButton.title='Indicator settings';indicatorSettingsButton.setAttribute('aria-label','Active indicator settings');
   $('btn-indicator').after(indicatorSettingsButton);indicatorSettingsButton.onclick=()=>indicatorSettings.open(active);
   for (const chart of charts) {
     chart.onIndicatorSettings=()=>{activate(chart);indicatorSettings.open(chart);};
@@ -176,7 +180,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function stopReplay() {
     clearInterval(replayTimer); replayTimer = null;
     if (replayChart) { replayChart.replayMode = false; replayChart.renderCurrentTimeframe(false); }
-    replayChart = null; $('replay-toolbar').classList.remove('show'); $('btn-replay-play').textContent = '▶ Play';
+    replayChart = null; $('replay-toolbar').classList.remove('show'); $('btn-replay-play').innerHTML = TerminalIcons.svg('play') + '<span>Play</span>';
   }
   $('btn-replay').addEventListener('click', () => {
     if (replayChart) { stopReplay(); return; }
@@ -192,8 +196,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('btn-replay-next').addEventListener('click', replayNext);
   $('btn-replay-exit').addEventListener('click', () => { stopReplay(); updateHeader(); });
   $('btn-replay-play').addEventListener('click', () => {
-    if (replayTimer) { clearInterval(replayTimer); replayTimer = null; $('btn-replay-play').textContent = '▶ Play'; }
-    else { replayTimer = setInterval(replayNext, 600); $('btn-replay-play').textContent = 'Ⅱ Pause'; }
+    if (replayTimer) { clearInterval(replayTimer); replayTimer = null; $('btn-replay-play').innerHTML = TerminalIcons.svg('play') + '<span>Play</span>'; }
+    else { replayTimer = setInterval(replayNext, 600); $('btn-replay-play').innerHTML = TerminalIcons.svg('pause') + '<span>Pause</span>'; }
   });
 
   // Price alerts survive reload; cross compares both sides of the threshold.
@@ -356,6 +360,34 @@ document.addEventListener('DOMContentLoaded', () => {
     socket.onclose = () => { bridge = { ...bridge, state: 'disconnected' }; statusText(); reconnect = setTimeout(connect, retry); retry = Math.min(retry * 2, 15000); };
   }
   $('btn-refresh-htf').addEventListener('click', () => { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ action: 'refresh' })); else toast('Backend chưa kết nối', 'alert'); });
+  function seedDemoData() {
+    const basePrices = { 'NQ1!': 18500, 'ES1!': 5400, 'YM1!': 39500, 'CL1!': 78 };
+    const now = Math.floor(Date.now() / 1000);
+    const minute = 60;
+    symbols.forEach(sym => {
+      if (!cache.has(sym)) {
+        const bars = [];
+        let price = basePrices[sym] || 1000;
+        const count = 300;
+        for (let i = count; i >= 0; i--) {
+          const t = now - i * minute;
+          const delta = (Math.sin(i / 8) + Math.cos(i / 4)) * (price * 0.0012) + (Math.random() - 0.49) * (price * 0.0018);
+          const open = price;
+          const close = price + delta;
+          const high = Math.max(open, close) + Math.random() * (price * 0.001);
+          const low = Math.min(open, close) - Math.random() * (price * 0.001);
+          bars.push({ time: t, open: Number(open.toFixed(2)), high: Number(high.toFixed(2)), low: Number(low.toFixed(2)), close: Number(close.toFixed(2)), volume: Math.floor(Math.random() * 500 + 100) });
+          price = close;
+        }
+        cache.set(sym, {
+          '1m': bars,
+          metadata: { exchange: 'CME', description: sym, tickSize: 0.25, pointValue: 20 }
+        });
+      }
+    });
+    charts.forEach(c => hydrate(c));
+  }
+  seedDemoData();
   refreshAlertLines();connect();
   setInterval(() => { const zone=active.appearance?.timezone||'America/New_York';$('live-clock').textContent = new Intl.DateTimeFormat('en-US', { timeZone:zone, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12:active.appearance?.hourFormat==='12-hours' }).format(new Date())+' '+zone.split('/').at(-1).replaceAll('_',' ');statusText(); }, 1000);
   window.addEventListener('beforeunload', () => {

@@ -123,7 +123,7 @@ class SyncController {
     this.syncEnabled = !this.syncEnabled;
     if (btnElement) {
       btnElement.classList.toggle('active', this.syncEnabled);
-      btnElement.innerHTML = this.syncEnabled ? '🔗 Sync: ON' : '🔗 Sync: OFF';
+      btnElement.innerHTML = TerminalIcons.svg('link') + '<span>Sync: ' + (this.syncEnabled ? 'ON' : 'OFF') + '</span>';
     }
   }
 }

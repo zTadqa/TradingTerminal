@@ -1,0 +1,525 @@
+/* TradingTerminal v5 - Drawing Tools & Settings CSS (TradingView style) */
+
+:root {
+  --v5-bg: #1e222d;
+  --v5-surface: #2a2e39;
+  --v5-surface-hover: #363c4e;
+  --v5-border: #434651;
+  --v5-text: #d1d4dc;
+  --v5-text-muted: #787b86;
+  --v5-primary: #2962ff;
+  --v5-primary-hover: #1e53e5;
+  --v5-danger: #f23645;
+  --v5-success: #089981;
+}
+
+/* V5 SIDEBAR OVERHAUL */
+#left-sidebar.v5-active {
+  width: 48px;
+  background: #131722;
+  border-right: 1px solid #2a2e39;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 0;
+  gap: 2px;
+  position: relative;
+  z-index: 100;
+  user-select: none;
+}
+
+.v5-tool-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: #787b86;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.v5-tool-btn:hover {
+  background: #2a2e39;
+  color: #d1d4dc;
+}
+
+.v5-tool-btn.active {
+  background: rgba(41, 98, 255, 0.2);
+  color: #2962ff;
+}
+
+.v5-tool-btn svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+}
+
+.v5-arrow-indicator {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 5px;
+  height: 5px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg);
+  opacity: 0.6;
+}
+
+.v5-sidebar-divider {
+  width: 28px;
+  height: 1px;
+  background: #2a2e39;
+  margin: 4px 0;
+}
+
+/* FLYOUT POPUP (TradingView tool drawer) */
+.v5-flyout {
+  position: fixed;
+  background: #1e222d;
+  border: 1px solid #363c4e;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  min-width: 240px;
+  max-width: 320px;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+  animation: v5FadeIn 0.12s ease;
+}
+
+@keyframes v5FadeIn {
+  from { opacity: 0; transform: translateX(-4px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.v5-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #787b86;
+  padding: 6px 14px 2px;
+}
+
+.v5-flyout-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 14px;
+  background: transparent;
+  border: none;
+  color: #d1d4dc;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: background 0.1s ease;
+}
+
+.v5-flyout-item:hover {
+  background: #2a2e39;
+  color: #ffffff;
+}
+
+.v5-flyout-item.active {
+  background: rgba(41, 98, 255, 0.15);
+  color: #2962ff;
+  font-weight: 500;
+}
+
+.v5-flyout-item-desc {
+  font-size: 11px;
+  color: #787b86;
+  margin-left: 8px;
+}
+
+/* EMOJI GRID IN FLYOUT */
+.v5-emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  padding: 8px 12px;
+}
+
+.v5-emoji-btn {
+  font-size: 20px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s;
+}
+
+.v5-emoji-btn:hover {
+  background: #2a2e39;
+  border-color: #363c4e;
+}
+
+/* FLOATING QUICK TOOLBAR (When drawing is selected) */
+.v5-floatbar {
+  position: fixed;
+  background: #1e222d;
+  border: 1px solid #363c4e;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 6px;
+  user-select: none;
+  animation: v5PopIn 0.12s ease;
+}
+
+@keyframes v5PopIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.v5-fb-btn {
+  background: transparent;
+  border: none;
+  color: #d1d4dc;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  font-size: 13px;
+  transition: background 0.1s;
+}
+
+.v5-fb-btn:hover {
+  background: #2a2e39;
+  color: #ffffff;
+}
+
+.v5-fb-color-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.v5-fb-divider {
+  width: 1px;
+  height: 18px;
+  background: #363c4e;
+  margin: 0 4px;
+}
+
+/* SETTINGS MODAL (TradingView style 4 tabs) */
+.v5-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.v5-settings-dialog {
+  background: #1e222d;
+  border: 1px solid #363c4e;
+  border-radius: 8px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+  width: 580px;
+  max-width: 95vw;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  color: #d1d4dc;
+  font-family: -apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif;
+  overflow: hidden;
+  animation: v5ModalSlide 0.15s ease-out;
+}
+
+@keyframes v5ModalSlide {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.v5-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  border-bottom: 1px solid #2a2e39;
+}
+
+.v5-dialog-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.v5-dialog-close {
+  background: transparent;
+  border: none;
+  color: #787b86;
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.v5-dialog-close:hover {
+  background: #2a2e39;
+  color: #ffffff;
+}
+
+.v5-dialog-tabs {
+  display: flex;
+  background: #181b24;
+  border-bottom: 1px solid #2a2e39;
+  padding: 0 16px;
+  gap: 8px;
+}
+
+.v5-tab-btn {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #787b86;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.v5-tab-btn:hover {
+  color: #d1d4dc;
+}
+
+.v5-tab-btn.active {
+  color: #2962ff;
+  border-bottom-color: #2962ff;
+}
+
+.v5-dialog-body {
+  padding: 18px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* SETTINGS FORM CONTROLS */
+.v5-control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.v5-control-label {
+  color: #d1d4dc;
+  flex: 1;
+}
+
+.v5-control-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.v5-input {
+  background: #131722;
+  border: 1px solid #363c4e;
+  border-radius: 4px;
+  color: #ffffff;
+  padding: 5px 8px;
+  font-size: 13px;
+  outline: none;
+  transition: border 0.15s;
+}
+
+.v5-input:focus {
+  border-color: #2962ff;
+}
+
+.v5-select {
+  background: #131722;
+  border: 1px solid #363c4e;
+  border-radius: 4px;
+  color: #ffffff;
+  padding: 5px 8px;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+}
+
+.v5-color-picker-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.v5-color-input {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.v5-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+}
+
+.v5-checkbox {
+  accent-color: #2962ff;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* FIB & LEVEL TABLE */
+.v5-levels-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.v5-levels-table th {
+  text-align: left;
+  font-size: 11px;
+  color: #787b86;
+  text-transform: uppercase;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #2a2e39;
+}
+
+.v5-levels-table td {
+  padding: 5px 4px;
+  border-bottom: 1px solid rgba(42, 46, 57, 0.4);
+}
+
+.v5-level-coeff-input {
+  width: 80px;
+}
+
+/* VISIBILITY MATRIX */
+.v5-vis-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.v5-vis-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid #2a2e39;
+}
+
+.v5-vis-inputs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.v5-vis-inputs input[type="number"] {
+  width: 55px;
+  text-align: center;
+}
+
+/* DIALOG FOOTER */
+.v5-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  background: #181b24;
+  border-top: 1px solid #2a2e39;
+}
+
+.v5-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.v5-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.v5-btn {
+  padding: 7px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+
+.v5-btn-secondary {
+  background: #2a2e39;
+  color: #d1d4dc;
+  border-color: #363c4e;
+}
+
+.v5-btn-secondary:hover {
+  background: #363c4e;
+  color: #ffffff;
+}
+
+.v5-btn-primary {
+  background: #2962ff;
+  color: #ffffff;
+}
+
+.v5-btn-primary:hover {
+  background: #1e53e5;
+}
+
+.v5-template-menu-btn {
+  background: transparent;
+  border: 1px solid #363c4e;
+  color: #d1d4dc;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.v5-template-menu-btn:hover {
+  background: #2a2e39;
+}

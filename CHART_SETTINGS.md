@@ -1,6 +1,6 @@
 # Chart Settings — đối chiếu TradingView Desktop
 
-Ngày 2026-11-11, mở Settings trực tiếp trên TradingView Desktop đang kết nối CDP 9222. Đọc cả bảy tab và cuộn phần dưới của Scales and lines, Canvas, Trading; mở palette màu. Đóng bằng Cancel, không áp dụng cấu hình hay đổi mã/phiên/timeframe nguồn.
+Ngày 2026-11-11, mở Settings trực tiếp trên TradingView Desktop đang kết nối CDP 9222, chart DAnnBWGE. Đọc cả bảy tab và cuộn phần dưới của Scales and lines, Canvas, Trading; mở palette màu. Đóng bằng Cancel, không áp dụng cấu hình hay đổi mã/phiên/timeframe nguồn.
 
 Dialog cũ chỉ có tám ô màu được thay bằng sidebar Symbol / Status line / Scales and lines / Canvas / Trading / Alerts / Events, nhóm mục, palette màu/hex, Template, Cancel, Ok. Áp dụng ở cả URL chính v4 và preview v5. Không phải tuyên bố toàn bộ tính năng TradingView đã tương đương.
 
@@ -38,4 +38,3 @@ Một số chi tiết giao diện/hành vi chưa pixel parity: palette dựng t�
 - Cả bảy tab mở được, palette có swatch/hex/custom. V4 preview font 14/navigation Always visible rồi Cancel khôi phục. Không thấy console error mới trong hai tab thử.
 - Unit: màu theo previous close qua gap, indicator override/body off và raw OHLC bất biến; timezone qua midnight/DST; margin/timezone validation trước mutation; apply riêng chart và không reset rightOffset khi đổi màu.
 - Ảnh local `chart-settings-canvas.jpg`, `chart-settings-symbol.jpg` trong thư mục visualization của chat. Kết quả toàn suite ghi ở AGENTS.md.
-

@@ -4,6 +4,12 @@ const CHART_DATE = new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York'
 const CHART_DATETIME = new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
 
 class ChartEngine {
+  static rebaseRange(oldBars,newBars,range,tfSeconds){
+    if(!range||!oldBars.length||!newBars.length)return range;
+    if(range.to>=oldBars.length-1){const delta=newBars.length-oldBars.length;return {from:range.from+delta,to:range.to+delta};}
+    const before={bars:oldBars,tfSeconds},after={bars:newBars,tfSeconds};
+    return {from:DrawingModel.logicalIndex(after,DrawingModel.timeAt(before,range.from)),to:DrawingModel.logicalIndex(after,DrawingModel.timeAt(before,range.to))};
+  }
   get plotHeight() { return this.container.clientHeight-(this.paneHeight||0); }
   constructor(container, symbol, config = {}) {
     this.container = container;
@@ -60,6 +66,7 @@ class ChartEngine {
       width: width,
       height: height,
       layout: {
+        attributionLogo:false,
         background: { type: 'solid', color: this.config.bg },
         textColor: this.config.textColor,
         fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif'
@@ -122,6 +129,9 @@ class ChartEngine {
       priceLineWidth: 1
     });
 
+    this.symbolBadge=document.createElement('img');this.symbolBadge.className='chart-symbol-badge';
+    this.symbolBadge.draggable=false;this.updateSymbolBadge();this.container.appendChild(this.symbolBadge);
+
     // Double click to reset view
     this.container.addEventListener('dblclick', (e) => {
       // Only reset if clicked inside chart area, not on buttons
@@ -133,6 +143,27 @@ class ChartEngine {
 
   addSeries(type,options,paneIndex=0) {
     return typeof this.chart.addSeries==='function'?this.chart.addSeries(LightweightCharts[type+'Series'],options,paneIndex):this.chart['add'+type+'Series'](options);
+  }
+
+  updateSymbolBadge(){
+    if(!this.symbolBadge)return;
+    const file={'NQ1!':'nasdaq-100','ES1!':'s-and-p-500','YM1!':'dow-30'}[this.symbol];
+    this.symbolBadge.hidden=!file;this.symbolBadge.alt=this.symbol;this.symbolBadge.title=this.symbol;
+    if(file)this.symbolBadge.src='assets/symbols/'+file+'.svg';
+  }
+
+  positionSymbolBadge(){
+    if(!this.symbolBadge)return;
+    const rect=this.container.getBoundingClientRect(),size=28;
+    const axisInset=(this.chart?.timeScale().height?.()||20)+10;
+    let bottom=rect.height-this.plotHeight+axisInset,left=10;
+    const overlaps=box=>box&&box.width>0&&box.height>0&&rect.left+left<box.right&&rect.left+left+size>box.left&&rect.bottom-bottom>box.top&&rect.bottom-bottom-size<box.bottom;
+    const sidebar=document.getElementById('left-sidebar')?.getBoundingClientRect();
+    if(overlaps(sidebar))left=Math.max(left,sidebar.right-rect.left+8);
+    for(const selector of ['.bottom-ranges','.bottom-meta']){const lower=document.querySelector(selector)?.getBoundingClientRect();if(overlaps(lower))bottom=Math.max(bottom,rect.bottom-lower.top+6);}
+    left=Math.max(4,Math.min(left,rect.width-65-size-4));bottom=Math.min(bottom,Math.max(4,rect.height-size-4));
+    if(this.symbolBadge.style.bottom!==bottom+'px')this.symbolBadge.style.bottom=bottom+'px';
+    if(this.symbolBadge.style.left!==left+'px')this.symbolBadge.style.left=left+'px';
   }
 
   initDrawingOverlay() {
@@ -170,6 +201,7 @@ class ChartEngine {
 
   resize() {
     const rect = this.container.getBoundingClientRect();
+    if(this.indicatorStack&&rect.width>0&&rect.height>0){this.indicatorStack.resize(rect);return;}
     if (rect.width > 0 && rect.height > 0) {
       const view=this.paneView||{};
       this.paneHeight = this.indicatorPane ? view.collapsed?24:view.maximized?rect.height:Math.max(24,Math.min(Math.max(56,rect.height*(view.ratio??.3)),rect.height-80)) : 0;
@@ -199,41 +231,27 @@ class ChartEngine {
       return MarketData.aggregate(filtered, tf, { ...this.metadata, session: this.metadata.sessionRegular?.session, sessionType: 'RTH' });
     }
     if (tf === '1m') return this.rawBars.map(b => ({ ...b }));
-    const direct = this.htfData[tf] || [];
-    if (!direct.length) return MarketData.aggregate(this.rawBars, tf, this.metadata);
-    const result = direct.map(b => ({ ...b }));
-    const last = result[result.length - 1];
-    const tail = this.rawBars.filter(b => b.time >= last.time);
-    const aggregate = MarketData.aggregate(tail, tf, this.metadata);
-    const baseline = this.htfBaselines[tf] || new Map();
-    for (const bar of aggregate) {
-      if (bar.time === last.time) {
-        // With full minute coverage, recompute; otherwise use only changes since the HTF snapshot.
-        const complete = tail.length && tail[0].time === last.time;
-        if (complete) Object.assign(last, bar);
-        else {
-          last.high = Math.max(last.high, bar.high);
-          last.low = Math.min(last.low, bar.low);
-          last.close = bar.close;
-          last.volume = Math.max(0, last.volume + tail.filter(b => MarketData.bucket(b.time, tf, this.metadata) === last.time)
-            .reduce((sum, b) => sum + b.volume - (baseline.get(b.time) || 0), 0));
-        }
-      } else if (bar.time > last.time) result.push(bar);
-    }
-    return result;
+    return (this.htfData[tf] || []).map(b => ({ ...b }));
   }
 
   renderCurrentTimeframe(reset = true) {
     const previous = this.chart.timeScale().getVisibleLogicalRange();
+    const previousBars=this.bars;
     const available = this.getBarsForTimeframe(this.currentTimeframe);
+    if(this.replayMode&&Number.isFinite(this.replayClock))this.replayIndex=TerminalTime.closedIndex(available,this.currentTimeframe,this.metadata,this.replayClock);
     this.bars = this.replayMode ? available.slice(0, this.replayIndex) : available;
-    this.series.setData(this.appearance?ChartAppearance.candleData(this,this.bars):this.bars);
+    this.renderCandleData();
     if (reset && this.bars.length) this.resetView();
-    else if (previous) this.chart.timeScale().setVisibleLogicalRange(previous);
+    else if (previous) this.chart.timeScale().setVisibleLogicalRange(ChartEngine.rebaseRange(previousBars,this.bars,previous,this.tfSeconds));
     this.updateLegend(this.bars[this.bars.length - 1]);
     this.container.dataset.empty = this.bars.length ? '' : 'Không có dữ liệu cho mã/khung này';
     this.renderDrawings();
     this.onDataChange?.();
+  }
+
+  renderCandleData(){
+    const bars=this.replayPreview?this.getBarsForTimeframe(this.currentTimeframe):this.bars;
+    this.series.setData(this.appearance?ChartAppearance.candleData(this,bars):bars);
   }
 
   setTimeframe(tf) {
@@ -241,7 +259,6 @@ class ChartEngine {
     const visible=this.appearance?.keepLeft?this.chart.timeScale().getVisibleRange():null;
     this.currentTimeframe = tf;
     this.tfSeconds = TF_MAP[tf];
-    this.replayMode = false;
     this.renderCurrentTimeframe();
     if(visible&&this.bars.length){const from=this.bars.findIndex(b=>b.time>=visible.from),range=this.chart.timeScale().getVisibleLogicalRange();if(from>=0&&range)this.chart.timeScale().setVisibleLogicalRange({from,to:from+range.to-range.from});}
   }
@@ -275,6 +292,7 @@ class ChartEngine {
   }
 
   clearData() {
+    this.updateSymbolBadge();
     this.rawBars = [];
     this.bars = [];
     this.htfData = {};
@@ -286,6 +304,8 @@ class ChartEngine {
   }
 
   clearCustomSeries() {
+    if(this.pinePaintPrimitive){this.series.detachPrimitive(this.pinePaintPrimitive);this.pinePaintPrimitive=null;this.pinePaintUpdate=null;}
+    this.indicatorPaints=[];
     for (const series of this.customSeries) this.chart.removeSeries(series);
     this.customSeries = [];
     this.indicatorDrawings = [];
@@ -296,11 +316,17 @@ class ChartEngine {
     this.paneCanvas?.remove(); this.paneCanvas=null;
     this.paneHeader?.remove();this.paneHeader=null;this.paneSeparator?.remove();this.paneSeparator=null;
     this.indicatorLegend?.remove();this.indicatorLegend=null;
-    this.container.querySelector('.indicator-tables')?.replaceChildren();
+    this.indicatorTables?.replaceChildren();
     this.resize();
   }
 
   applyIndicatorResult(result) {
+    this.indicatorPaints=result.paints||[];
+    if(this.indicatorPaints.length&&!this.pinePaintPrimitive&&typeof this.series.attachPrimitive==='function'){
+      this.pinePaintPrimitive={attached:({requestUpdate})=>{this.pinePaintUpdate=requestUpdate;},paneViews:()=>[{zOrder:()=> 'bottom',renderer:()=>({draw:target=>target.useMediaCoordinateSpace(scope=>PinePainter.draw(scope.context,this,{paints:this.indicatorPaints},scope.mediaSize.width+65,scope.mediaSize.height))})}]};
+      this.series.attachPrimitive(this.pinePaintPrimitive);
+    }
+    this.pinePaintUpdate?.();
     // Keep series instances across ticks; rebuilding them also resets scale state.
     const descriptors=result.series || [];
     if(this.customSeries.length!==descriptors.length || this.customSeries.some((s,i)=>s._indicatorType!==(descriptors[i].type||'line'))) {
@@ -309,8 +335,10 @@ class ChartEngine {
     }
     descriptors.forEach((descriptor,i) => {
       const options = { color: descriptor.color || '#2962ff', lineWidth: Math.max(1, Math.min(4, Math.round(descriptor.width || 1))),
-        title: descriptor.title || '', priceLineVisible: false, lastValueVisible: false };
-      const series = this.customSeries[i] || this.addSeries(descriptor.type==='histogram'?'Histogram':'Line',options);
+        title: descriptor.title || '', priceLineVisible: false, lastValueVisible: false,
+        lineStyle:descriptor.lineStyle==='dashed'?2:descriptor.lineStyle==='dotted'?1:0,lineType:descriptor.step?1:0 };
+      if(descriptor.type==='area')Object.assign(options,{lineColor:options.color,topColor:options.color,bottomColor:'transparent'});
+      const series = this.customSeries[i] || this.addSeries(descriptor.type==='histogram'?'Histogram':descriptor.type==='area'?'Area':'Line',options);
       series._indicatorType=descriptor.type||'line'; series.applyOptions({...options,lastValueVisible:this.appearance?.indicatorValues==='Value'});
       series.setData(descriptor.data);
       this.customSeries[i]=series;
@@ -332,26 +360,29 @@ class ChartEngine {
       this.paneCanvas.remove();this.paneCanvas=null;this.paneHeader?.remove();this.paneHeader=null;this.paneSeparator?.remove();this.paneSeparator=null;
     }
     if(this.paneCanvas)this.paneCanvas.setAttribute('aria-label',this.indicatorPane.title||'Indicator pane');
-    let panel = this.container.querySelector('.indicator-tables');
-    if (!panel) { panel = document.createElement('div'); panel.className = 'indicator-tables'; this.container.appendChild(panel); }
+    let panel = this.indicatorTables;
+    if (!panel) { panel = document.createElement('div'); panel.className = 'indicator-tables'; this.indicatorTables=panel;this.container.appendChild(panel); }
     panel.replaceChildren();
     const groups=new Map();
     for (const descriptor of result.tables || []) {
-      const position=String(descriptor.position||'Top Right').toLowerCase().replaceAll('_',' '),key=position+':'+!!descriptor.pane;
+      const position=String(descriptor.position||'Top Right').toLowerCase().replaceAll('_',' '),key=position+':'+!!descriptor.pane+':'+(descriptor.paneId||'');
       if(!groups.has(key)) {
         const group=document.createElement('div');group.className='indicator-table-group';
         if(descriptor.pane) {group.classList.add('pane-table-group');group.style.maxHeight='calc(var(--indicator-pane-height, 70px) - 30px)';group.style.overflow='auto';group.style.pointerEvents='auto';}
         group.style[position.includes('left')?'left':'right']=position.includes('left')?'6px':'76px';
         if(position.includes('bottom'))group.style.bottom=descriptor.pane?'4px':'calc(var(--indicator-pane-height, 0px) + 30px)';
         else group.style.top=position.includes('middle')?'40%':descriptor.pane?'calc(100% - var(--indicator-pane-height, 0px) + 26px)':'6px';
+        const host=this.indicatorStack?.hosts.get(descriptor.paneId);
+        if(descriptor.pane&&host){const bottom=parseFloat(host.paneCanvas?.style.bottom)||0,height=host.paneHeight||70;group.style.maxHeight=Math.max(0,height-28)+'px';group.style.top='auto';group.style.bottom=position.includes('bottom')?(bottom+4)+'px':'auto';if(!position.includes('bottom'))group.style.top=(this.container.clientHeight-bottom-height+26)+'px';}
         panel.appendChild(group);groups.set(key,group);
       }
       const table = document.createElement('table');
       if (descriptor.title) { const caption = table.createCaption(); caption.textContent = descriptor.title; }
       for (const row of descriptor.rows || []) {
         const tr = table.insertRow();
-        for (const value of row) { const td = tr.insertCell(); td.textContent = String(value && typeof value==='object' ? value.text??'' : value??''); if(value?.color)td.style.color=value.color; }
+        for (const value of row) { const td = tr.insertCell(); td.textContent = String(value && typeof value==='object' ? value.text??'' : value??''); if(value?.color)td.style.color=value.color;if(value?.background)td.style.background=value.background;if(value?.align)td.style.textAlign=value.align;if(value?.size)td.style.fontSize=Math.max(8,Math.min(72,value.size))+'px'; }
       }
+      for(const merge of (descriptor.merges||[]).slice(0,3000)){if(![merge.startRow,merge.endRow,merge.startCol,merge.endCol].every(Number.isInteger)||merge.startRow<0||merge.startCol<0||merge.endRow<merge.startRow||merge.endCol<merge.startCol||merge.endRow>=table.rows.length||merge.endCol>=30)continue;const cell=table.rows[merge.startRow]?.cells[merge.startCol];if(!cell)continue;cell.colSpan=merge.endCol-merge.startCol+1;cell.rowSpan=merge.endRow-merge.startRow+1;for(let r=merge.startRow;r<=merge.endRow;r++)for(let c=merge.startCol;c<=merge.endCol;c++)if(r!==merge.startRow||c!==merge.startCol){const covered=table.rows[r]?.cells[c];if(covered)covered.hidden=true;}}
       groups.get(key).appendChild(table);
     }
     this.renderDrawings();
@@ -359,6 +390,7 @@ class ChartEngine {
   }
 
   renderIndicatorPane() {
+    if(this.indicatorStack){this.indicatorStack.redraw();return;}
     if(!this.paneCanvas||!this.indicatorPane)return;
     const width=this.container.clientWidth,height=this.paneHeight||70,dpr=window.devicePixelRatio||1;
     this.paneCanvas.width=width*dpr;this.paneCanvas.height=height*dpr;
@@ -372,6 +404,7 @@ class ChartEngine {
     ctx.save();ctx.beginPath();ctx.rect(0,24,Math.max(0,width-65),height-24);ctx.clip();
     const adapter={bars:this.bars,tfSeconds:this.tfSeconds,currentTimeframe:this.currentTimeframe,chart:this.chart,container:this.container,
       series:{priceToCoordinate:y}};
+    if(pane.series?.length||pane.paints?.length)PinePainter.draw(ctx,adapter,pane,width,height);
     for(const drawing of pane.drawings)DrawingModel.draw(ctx,adapter,drawing);
     ctx.restore();
     ctx.fillStyle=this.config.textColor;ctx.font='10px Arial';ctx.textAlign='left';
@@ -384,6 +417,7 @@ class ChartEngine {
       const title=document.createElement('span');title.className='indicator-title';legend.appendChild(title);
       const settings=document.createElement('button');settings.type='button';settings.textContent='⚙';settings.title='Indicator settings';settings.setAttribute('aria-label','Indicator settings');
       settings.onclick=event=>{event.stopPropagation();this.onIndicatorSettings?.();};legend.appendChild(settings);
+      const eye=document.createElement('button');eye.type='button';eye.className='indicator-eye';eye.textContent='◉';eye.title='Hide / show indicator';eye.setAttribute('aria-label','Hide or show indicator');eye.onclick=e=>{e.stopPropagation();this.onIndicatorToggle?.();};legend.insertBefore(eye,settings);
       legend.ondblclick=()=>this.onIndicatorSettings?.();
     }
     this.indicatorLegend.querySelector('.indicator-title').textContent=name.replace(/ · JavaScript.*$/,'');
@@ -597,7 +631,7 @@ class ChartEngine {
     const diff=bar.close-previous,diffPct=previous?diff/previous*100:0;
     legendEl.replaceChildren();legendEl.style.color=s?.textColor||this.config.textColor;
     const add=(text,className)=>{const span=document.createElement('span');span.className=className||'';span.textContent=text;legendEl.appendChild(span);};
-    if(s?.logo)add(this.symbol.slice(0,1),'legend-logo');
+    if(s?.logo)add(({ 'NQ1!':'100','ES1!':'500','YM1!':'30' })[this.symbol]||this.symbol.slice(0,1),'legend-logo '+(this.symbol==='ES1!'?'legend-logo-es':''));
     if(s?.title!==false){const description=this.metadata?.description||this.symbol;const title=s?.titleMode==='Name'?description:s?.titleMode==='Name and ticker'?description+' · '+this.symbol:this.symbol;add(`${title} · ${this.currentTimeframe} · ${this.sessionMode||'ETH'}`,'legend-symbol');}
     if(s?.marketStatus)add(this.marketLive?'● Live':'○ Stale','legend-market');
     if(s?.chartValues!==false)add(`O ${format(bar.open)}  H ${format(bar.high)}  L ${format(bar.low)}  C ${format(bar.close)}`,'legend-ohlc');
@@ -606,45 +640,51 @@ class ChartEngine {
   }
 
   updateCountdown(){
-    if(!this.appearance?.countdown){this.countdownLabel?.remove();this.countdownLabel=null;return;}
-    if(!this.countdownLabel){this.countdownLabel=document.createElement('div');this.countdownLabel.className='chart-countdown';this.container.appendChild(this.countdownLabel);}
-    const b=this.bars.at(-1),seconds=b?Math.ceil(b.time+this.tfSeconds-Date.now()/1000):0;
-    // Calendar-sized bars are not fixed-length exchange sessions; do not invent a countdown.
-    this.countdownLabel.hidden=!b||seconds<0||this.tfSeconds>=86400||this.replayMode||!this.marketLive;
-    this.countdownLabel.textContent=`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;
-    const y=b?this.series.priceToCoordinate(b.close):null;this.countdownLabel.style.top=Math.max(0,Math.min(this.plotHeight-42,(y??0)+10))+'px';
+    const a=this.appearance,visible=a?.symbolLine?.toLowerCase().includes('value')??true;
+    if(!a?.countdown||!visible){this.countdownLabel?.remove();this.countdownLabel=null;return;}
+    if(!this.countdownLabel){const el=document.createElement('div');el.className='chart-countdown';el.innerHTML='<span class="axis-price"></span><span class="axis-countdown"></span>';this.container.appendChild(el);this.countdownLabel=el;}
+    this.series.applyOptions({lastValueVisible:false});
+    const b=this.bars.at(-1),now=this.replayMode?this.replayClock:Date.now()/1000;
+    const metadata=this.sessionMode==='RTH'?{...this.metadata,session:this.metadata.sessionRegular?.session,sessionCorrections:this.metadata.sessionRegular?.corrections}:this.metadata;
+    const raw=this.currentTimeframe==='1m'?this.rawBars:this.htfData[this.currentTimeframe]||[];
+    let lo=0,hi=raw.length;while(lo<hi){const mid=(lo+hi)>>1;if(raw[mid].time<=now)lo=mid+1;else hi=mid;}
+    // Read timestamps only for the in-progress interval; Replay price/indicators stay closed-bar only.
+    const current=raw[lo-1],session=TerminalTime.activeSession(now,metadata),seconds=current?Math.max(0,Math.ceil(TerminalTime.end({time:current.time},this.currentTimeframe,metadata)-now)):0;
+    const label=this.countdownLabel,y=b?this.series.priceToCoordinate(b.close):null;label.hidden=!b||y===null||y<0||y>this.plotHeight-26;
+    if(!b)return;label.querySelector('.axis-price').textContent=this.series.priceFormatter().format(b.close);
+    const timer=label.querySelector('.axis-countdown');timer.hidden=!session||seconds<=0;timer.textContent=timer.hidden?'':TerminalTime.format(seconds);
+    label.style.background=a.symbolLineColor||'#211f1d';label.style.color=TerminalFeatures.contrast(a.symbolLineColor||'#211f1d');
+    label.style.fontSize=(a.fontSize||12)+'px';label.style.top=Math.max(0,Math.min(this.plotHeight-label.offsetHeight-26,(y??0)-(a.fontSize||12)*.7))+'px';
+    this.positionCountdown();
+  }
+  positionCountdown(){
+    const label=this.countdownLabel;if(!label)return;const b=this.bars?.at(-1);if(!b)return;const y=this.series.priceToCoordinate(b.close);label.hidden=y===null||y<0||y>this.plotHeight-26;if(label.hidden)return;label.style.top=Math.max(0,Math.min(this.plotHeight-label.offsetHeight-26,y-(this.appearance?.fontSize||12)*.7))+'px';label.style.width=Math.max(50,this.chart.priceScale('right').width())+'px';
   }
 
   // MAGNET HELPER (SNAP TO CANDLE OHLC)
-  snapToOHLC(time, price) {
-    if (!this.bars || !this.bars.length) return price;
-    // Find closest bar to time
-    let closestBar = null;
-    let minDiff = Infinity;
-    for (const b of this.bars) {
-      const d = Math.abs(b.time - time);
-      if (d < minDiff) {
-        minDiff = d;
-        closestBar = b;
-      }
+  snapToBar(time,price,mode='strong') {
+    if(!this.bars?.length||!Number.isFinite(time)||!Number.isFinite(price))return {time,price};
+    let lo=0,hi=this.bars.length-1;
+    while(lo<hi){const mid=(lo+hi)>>1;if(this.bars[mid].time<time)lo=mid+1;else hi=mid;}
+    const next=this.bars[lo],prior=this.bars[Math.max(0,lo-1)];
+    const bar=Math.abs(next.time-time)<Math.abs(prior.time-time)?next:prior;
+    const y=this.series.priceToCoordinate(price);if(y===null)return {time,price};
+    let closest=price,distance=Infinity;
+    for(const candidate of [bar.open,bar.high,bar.low,bar.close]){const at=this.series.priceToCoordinate(candidate);if(at===null)continue;const delta=Math.abs(at-y);if(delta<distance){closest=candidate;distance=delta;}}
+    if(mode==='weak'){
+      const x=this.chart.timeScale().logicalToCoordinate(DrawingModel.logicalIndex(this,time));
+      const barX=this.chart.timeScale().logicalToCoordinate(DrawingModel.logicalIndex(this,bar.time));
+      if(x===null||barX===null||Math.hypot(x-barX,distance)>8)return {time,price};
     }
-    if (!closestBar) return price;
-
-    const candidates = [closestBar.open, closestBar.high, closestBar.low, closestBar.close];
-    let closestPrice = price;
-    let minPriceDiff = Infinity;
-    for (const c of candidates) {
-      const pd = Math.abs(c - price);
-      if (pd < minPriceDiff) {
-        minPriceDiff = pd;
-        closestPrice = c;
-      }
-    }
-    return closestPrice;
+    if(!Number.isFinite(distance))return {time,price};
+    return {time:bar.time,price:closest};
   }
+  snapToOHLC(time,price){return this.snapToBar(time,price).price;}
 
   // DRAWINGS RENDERING
   renderDrawings() {
+    this.positionSymbolBadge();
+    this.positionCountdown();
     if (!this.overlayCtx) return;
     const ctx = this.overlayCtx;
     const rect = this.container.getBoundingClientRect();

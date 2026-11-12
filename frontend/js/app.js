@@ -5,8 +5,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const symbols = ['NQ1!', 'ES1!', 'YM1!', 'CL1!'];
   const cache = new Map();
   let bridge = { state: 'connecting', symbols: [] };
-  let socket, reconnect, retry = 1000, replayTimer, replayChart;
-  const charts = ['NQ1!', 'ES1!', 'YM1!'].map((symbol, i) => {
+  let socket, reconnect, retry = 1000;
+  for(let i=4;i<=16;i++){const node=$('box-1').cloneNode(true);node.id=`box-${i}`;node.classList.remove('active');$('chart-grid').appendChild(node);}
+  let features,replay;
+  const charts = Array.from({length:16},(_,i)=>['NQ1!','ES1!','YM1!'][i%3]).map((symbol, i) => {
     const Engine=window.TERMINAL_ENGINE_V5?ChartEngineV5:ChartEngine;
     const c = new Engine($(`box-${i + 1}`), symbols.includes(saved.charts?.[i]?.symbol) ? saved.charts[i].symbol : symbol, colors);
     c.id = `box-${i + 1}`;
@@ -14,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
     c.tfSeconds = TF_MAP[c.currentTimeframe];
     c.savedRange = saved.charts?.[i]?.range;
     c.sessionMode = saved.charts?.[i]?.sessionMode === 'RTH' ? 'RTH' : 'ETH';
+    const badge=document.createElement('span');badge.className='chart-data-status';badge.hidden=true;c.container.appendChild(badge);c.sourceBadge=badge;
     return c;
   });
   window.charts = charts;
@@ -23,17 +26,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const sync = new SyncController();
   window.syncCtrl = sync;
   charts.forEach(c => sync.register(c));
-  const drawing = (window.TERMINAL_ENGINE_V5 && window.DrawingIntegrationV5)
-    ? DrawingIntegrationV5.attach(charts)
-    : new DrawingManager();
+  const drawing = new DrawingManager();
   window.drawingMgr = drawing;
-  if (!window.TERMINAL_ENGINE_V5 || !window.DrawingIntegrationV5) {
-    charts.forEach(c => drawing.bindChart(c));
-  }
+  charts.forEach(c => drawing.bindChart(c));
   const grid = $('chart-grid');
   if ([...document.querySelectorAll('.layout-icon-btn')].some(b => b.dataset.layout === saved.layout)) grid.className = saved.layout;
   let active = charts.find(c => c.id === saved.active) || charts[0];
-  let saveTimer;
+  let saveTimer,desktop;
   function saveWorkspace() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => Workspace.write('terminal_workspace_v1', { active: active.id, layout: grid.className, charts: charts.map(c => ({ symbol: c.symbol, timeframe: c.currentTimeframe, sessionMode: c.sessionMode, range: c.savedRange || c.chart.timeScale().getVisibleLogicalRange() })) }), 250);
@@ -56,10 +55,25 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   function live(symbol) {
     const bar = cache.get(symbol)?.['1m']?.at(-1);
-    return !!bar && Math.abs(Date.now() / 1000 - bar.time) < 180 && bridge.state === 'connected' && Date.now() / 1000 - bridge.last_update < 5 && bridge.symbols?.some(item => item.symbol === symbol && item.timeframe === '1m');
+    return !!bar && Math.abs(Date.now() / 1000 - bar.time) < 180 && bridge.state === 'connected' && bridge.sources?.some(item => item.symbol === symbol && item.timeframe === '1m' && Date.now()/1000-item.updated<8);
   }
   function updateHeader() {
+    for(const c of charts){c.container.setAttribute('role','region');c.container.setAttribute('aria-label',`${c.symbol} · ${c.currentTimeframe} · ${c.replayMode?'Replay':'Live'}`);}
     $('active-symbol-title').textContent = active.symbol;
+    const badge=$('btn-symbol-search').querySelector('.badge-circle');
+    if(badge.dataset.symbol!==active.symbol){
+      badge.dataset.symbol=active.symbol;
+      if(active.symbolBadge&&!active.symbolBadge.hidden){
+        const icon=active.symbolBadge.cloneNode(false);
+        icon.removeAttribute('class');
+        icon.removeAttribute('style');
+        icon.alt='';
+        badge.replaceChildren(icon);
+      }else{
+        badge.textContent=active.symbol==='CL1!'?'OIL':active.symbol.slice(0,2);
+      }
+    }
+    replay?.updateTimeframe();
     $('session-mode').value = active.sessionMode;
     document.querySelectorAll('.tf-btn').forEach(b => b.classList.toggle('active', b.dataset.tf === active.currentTimeframe));
     const bar = cache.get(active.symbol)?.['1m']?.at(-1);
@@ -76,35 +90,32 @@ document.addEventListener('DOMContentLoaded', () => {
     chart.container.appendChild(document.querySelector('.tv-trade-pill'));
     document.querySelector('.tv-trade-pill').hidden=chart.appearance?.buySell===false;
     charts.forEach(c => c.container.classList.toggle('active', c === chart));
-    updateHeader(); saveWorkspace();
+    updateHeader(); saveWorkspace();if(desktop){desktop.hoverBar=null;desktop.signature='';desktop.refresh();}
   }
-  const indicatorSettings=new IndicatorSettings((chart,settings,view)=>{
-    const script=Workspace.read(`indicator_${chart.id}`,null);if(!script?.code)return false;
-    const inputsChanged=JSON.stringify(settings)!==JSON.stringify(chart.runner.settings);
-    if(!Workspace.write(`indicator_${chart.id}`,{...script,settings,view}))return false;
-    if(inputsChanged)chart.runner.load(script.code,settings,view);
-    else {chart.runner.view=view;chart.runner.applyView();}
-    return true;
+  const indicatorSettings=new IndicatorSettings((chart,settings,view,id)=>{
+    const entry=chart.runner.entries.find(e=>e.record.id===id);
+    return !!entry&&chart.runner.update(id,{settings,view});
   });
-  const indicatorSettingsButton=document.createElement('button');indicatorSettingsButton.id='btn-indicator-settings';indicatorSettingsButton.className='btn-icon';indicatorSettingsButton.innerHTML=TerminalIcons.svg('settings');indicatorSettingsButton.title='Indicator settings';indicatorSettingsButton.setAttribute('aria-label','Active indicator settings');
+  let indicatorLibrary;
+  const indicatorSettingsButton=document.createElement('button');indicatorSettingsButton.id='btn-indicator-settings';indicatorSettingsButton.className='btn-icon';indicatorSettingsButton.textContent='⚙';indicatorSettingsButton.title='Indicator settings';indicatorSettingsButton.setAttribute('aria-label','Active indicator settings');
   $('btn-indicator').after(indicatorSettingsButton);indicatorSettingsButton.onclick=()=>indicatorSettings.open(active);
   for (const chart of charts) {
     chart.onIndicatorSettings=()=>{activate(chart);indicatorSettings.open(chart);};
     chart.container.addEventListener('pointerdown', () => activate(chart));
     chart.container.addEventListener('chart-activate', () => activate(chart));
     chart.sessionMode ||= 'ETH';
-    chart.runner = new IndicatorRunner(chart, () => ({ markets: Object.fromEntries(cache), viewport: chart.chart.timeScale().getVisibleRange() }), message => {
+    chart.runner = new IndicatorCollection(chart, () => ({ markets: replay?.running?replay.markets(cache):Object.fromEntries(cache), viewport: chart.chart.timeScale().getVisibleRange() }), message => {
       chart.indicatorStatus = message; if (chart === active) $('indicator-status').textContent = message;
     });
     chart.onDataChange = () => chart.runner.schedule();
     chart.chart.timeScale().subscribeVisibleLogicalRangeChange(() => { saveWorkspace(); chart.runner.schedule(); });
-    const script = Workspace.read(`indicator_${chart.id}`, null);
-    if (script?.code) chart.runner.load(script.code, script.settings,script.view);
+    chart.onIndicatorEdit=id=>{activate(chart);indicatorLibrary.open(chart,id);};
   }
   activate(active);
   document.querySelectorAll('.tf-btn').forEach(button => button.addEventListener('click', () => {
-    stopReplay();
-    (sync.syncEnabled ? charts : [active]).forEach(c => c.setTimeframe(button.dataset.tf));
+    if(['6h','12h'].includes(button.dataset.tf))return toast('Nguồn TradingView hiện chặn custom interval 6h/12h; các chart khác vẫn cập nhật.','alert');
+    (sync.options.interval ? features.visibleCharts() : [active]).forEach(c => c.setTimeframe(button.dataset.tf));
+    replay?.refresh();features?.subscribe();
     updateHeader(); saveWorkspace();
   }));
   $('session-mode').addEventListener('change', event => {
@@ -112,8 +123,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (active.sessionMode === 'RTH') toast(active.metadata.sessionRegular ? 'RTH dùng lịch phiên từ TradingView; lịch sử giới hạn theo nến 1m đã tải.' : 'Đang chờ metadata phiên RTH từ TradingView.');
   });
   document.querySelectorAll('[data-tool]').forEach(button => button.addEventListener('click', () => drawing.setTool(button.dataset.tool)));
-  document.querySelectorAll('.range-btn').forEach(button => button.addEventListener('click', () => (sync.syncEnabled ? charts : [active]).forEach(c => c.setRange(button.textContent))));
-  $('btn-sync').addEventListener('click', () => sync.toggleSync($('btn-sync')));
+  document.querySelectorAll('.range-btn').forEach(button => button.addEventListener('click', () => (sync.options.dateRange ? features.visibleCharts() : [active]).forEach(c => c.setRange(button.textContent))));
+  const renderSyncButton=()=>{$('btn-sync').innerHTML=TerminalIcons.svg('link')+`<span>Sync: ${sync.syncEnabled?'ON':'OFF'}</span>`;$('btn-sync').setAttribute('aria-pressed',String(sync.syncEnabled));};
+  renderSyncButton();
+  $('btn-sync').addEventListener('click', () => {sync.toggleSync($('btn-sync'));renderSyncButton();});
   $('btn-layout').addEventListener('click', event => { event.stopPropagation(); $('layout-popover').classList.toggle('show'); });
   document.querySelectorAll('.layout-icon-btn').forEach(button => button.addEventListener('click', () => {
     grid.className = button.dataset.layout;
@@ -128,89 +141,44 @@ document.addEventListener('DOMContentLoaded', () => {
   // Symbol changes restore independent data and drawings; labels never relabel old candles.
   function hydrate(chart) {
     const data = cache.get(chart.symbol) || {};
+    if(replay?.running&&replay.targets?.includes(chart)){chart.replayMode=true;chart.replayClock=replay.clock;}
     chart.metadata = data.metadata || {};
     chart.setData(data['1m'] || []);
     for (const [tf, bars] of Object.entries(data)) if (TF_MAP[tf] && tf !== '1m') chart.setHtfData(tf, bars);
     if (chart.savedRange && chart.bars.length) { chart.chart.timeScale().setVisibleLogicalRange(chart.savedRange); chart.savedRange = null; }
   }
+  function changeSymbol(c,symbol){drawing.saveDrawings(c);c.runner.stop();c.clearCustomSeries();c.symbol=symbol;c.clearData();drawing.loadDrawings(c);hydrate(c);c.runner.restart();}
   $('btn-symbol-search').addEventListener('click', () => { showModal('symbol-modal'); $('symbol-search-input').value = ''; $('symbol-search-input').focus(); });
   $('symbol-search-input').addEventListener('input', event => document.querySelectorAll('.symbol-item').forEach(el => { el.hidden = !el.textContent.toLowerCase().includes(event.target.value.toLowerCase()); }));
   document.querySelectorAll('.symbol-item').forEach(item => item.addEventListener('click', () => {
-    stopReplay(); drawing.saveDrawings(active); drawing.setTool('crosshair');
+    drawing.saveDrawings(active); drawing.setTool('crosshair');
     drawing.editor.clear(); active.runner.stop(); active.clearCustomSeries(); active.symbol = item.dataset.sym; active.clearData();
     drawing.loadDrawings(active); hydrate(active);refreshAlertLines();renderPaper();
-    const script = Workspace.read(`indicator_${active.id}`, null); if (script?.code) active.runner.load(script.code, script.settings,script.view);
+    active.runner.restart();
+    if(sync.options.symbol)for(const c of features.visibleCharts()){if(c!==active)changeSymbol(c,active.symbol);}
+    features?.subscribe();replay?.refresh();
     closeModal($('symbol-modal')); updateHeader(); saveWorkspace();
   }));
 
-  // The script editor stays empty until the user imports or writes a script.
-  $('btn-indicator').addEventListener('click', () => {
-    const script = Workspace.read(`indicator_${active.id}`, {}) || {};
-    $('indicator-name').value = script.name || '';
-    $('indicator-code').value = script.code || '';
-    $('indicator-settings').value = JSON.stringify(script.settings || {}, null, 2);
-    showModal('indicator-modal');
-  });
-  $('indicator-file').addEventListener('change', async event => {
-    const file = event.target.files[0]; if (!file) return;
-    if (file.size > 2 * 1024 * 1024) { toast('File vượt 2 MB', 'alert'); return; }
-    $('indicator-code').value = await file.text(); $('indicator-name').value = file.name.replace(/\.[^.]+$/, ''); event.target.value = '';
-  });
-  $('apply-indicator').addEventListener('click', () => {
-    try {
-      const settings = JSON.parse($('indicator-settings').value || '{}');
-      if (!settings || Array.isArray(settings) || typeof settings !== 'object') throw new Error('Settings cần là JSON object.');
-      const previous=Workspace.read(`indicator_${active.id}`,null);
-      const script = { name: $('indicator-name').value.trim() || 'Custom indicator', code: $('indicator-code').value, settings,view:previous?.view||{} };
-      if (!Workspace.write(`indicator_${active.id}`, script)) return;
-      active.runner.load(script.code, script.settings,script.view); closeModal($('indicator-modal'));
-    } catch (error) { toast(error.message, 'alert'); }
-  });
-  $('remove-indicator').addEventListener('click', () => {
-    active.runner.stop(); active.clearCustomSeries(); Workspace.write(`indicator_${active.id}`, null);
-    active.indicatorStatus = 'Chưa có indicator'; updateHeader(); closeModal($('indicator-modal'));
-  });
+  indicatorLibrary=new IndicatorLibrary({getChart:()=>active,openSettings:(chart,id)=>{chart.runner.select(id);indicatorSettings.open(chart);},onChange:()=>{updateHeader();if(desktop){desktop.signature='';desktop.refresh();}}});
+  indicatorLibrary.migrate(charts);
+  $('btn-indicator').addEventListener('click',()=>indicatorLibrary.open());
 
-  // Replay owns its display slice. Live data continues in the cache without entering replay.
-  function replayDraw() {
-    if (!replayChart) return;
-    replayChart.renderCurrentTimeframe(false);
-    $('replay-position').textContent = `${replayChart.symbol} · ${replayChart.replayIndex}/${replayChart.getBarsForTimeframe(replayChart.currentTimeframe).length}`;
-  }
-  function stopReplay() {
-    clearInterval(replayTimer); replayTimer = null;
-    if (replayChart) { replayChart.replayMode = false; replayChart.renderCurrentTimeframe(false); }
-    replayChart = null; $('replay-toolbar').classList.remove('show'); $('btn-replay-play').innerHTML = TerminalIcons.svg('play') + '<span>Play</span>';
-  }
-  $('btn-replay').addEventListener('click', () => {
-    if (replayChart) { stopReplay(); return; }
-    if (active.bars.length < 2) return toast('Chưa đủ nến để replay', 'alert');
-    replayChart = active; active.replayMode = true; active.replayIndex = Math.max(1, active.bars.length - 25);
-    $('replay-toolbar').classList.add('show'); replayDraw(); updateHeader();
-  });
-  function replayNext() {
-    if (!replayChart) return;
-    replayChart.replayIndex = Math.min(replayChart.replayIndex + 1, replayChart.getBarsForTimeframe(replayChart.currentTimeframe).length); replayDraw();
-  }
-  $('btn-replay-prev').addEventListener('click', () => { if (replayChart) { replayChart.replayIndex = Math.max(1, replayChart.replayIndex - 1); replayDraw(); } });
-  $('btn-replay-next').addEventListener('click', replayNext);
-  $('btn-replay-exit').addEventListener('click', () => { stopReplay(); updateHeader(); });
-  $('btn-replay-play').addEventListener('click', () => {
-    if (replayTimer) { clearInterval(replayTimer); replayTimer = null; $('btn-replay-play').innerHTML = TerminalIcons.svg('play') + '<span>Play</span>'; }
-    else { replayTimer = setInterval(replayNext, 600); $('btn-replay-play').innerHTML = TerminalIcons.svg('pause') + '<span>Pause</span>'; }
-  });
+  function stopReplay(){replay?.stop();}
+  function replayNext(){replay?.step(1);}
 
   // Price alerts survive reload; cross compares both sides of the threshold.
   let alerts = Workspace.read('terminal_alerts_v1', []);
   if (!Array.isArray(alerts)) alerts = [];
   const previousPrices = new Map();
-  $('btn-alert').addEventListener('click', () => { $('alert-sym-label').textContent = active.symbol; $('alert-price-input').value = cache.get(active.symbol)?.['1m']?.at(-1)?.close || ''; showModal('alert-modal'); });
+  function openAlert(chart,price){activate(chart);$('alert-sym-label').textContent=chart.symbol;$('alert-price-input').value=Number.isFinite(price)?price:(cache.get(chart.symbol)?.['1m']?.at(-1)?.close||'');showModal('alert-modal');}
+  $('btn-alert').addEventListener('click',()=>openAlert(active));
   $('btn-save-alert').addEventListener('click', () => {
     const price = Number($('alert-price-input').value); if (!Number.isFinite(price) || !$('alert-price-input').value) return toast('Nhập giá hợp lệ', 'alert');
     alerts.push({ symbol: active.symbol, price, condition: $('alert-condition').value, triggered: false });
     Workspace.write('terminal_alerts_v1', alerts); refreshAlertLines(); closeModal($('alert-modal')); toast('Đã lưu cảnh báo giá');
   });
-  function refreshAlertLines(){charts.forEach(c=>{c.priceAlerts=alerts.filter(a=>a.symbol===c.symbol);c.renderDrawings();});}
+  function refreshAlertLines(){charts.forEach(c=>{c.priceAlerts=alerts.filter(a=>a.symbol===c.symbol);c.renderDrawings();});desktop?.refresh();}
   function checkAlerts(symbol, price) {
     const previous = previousPrices.get(symbol); previousPrices.set(symbol, price);
     for (const alert of alerts) {
@@ -259,9 +227,17 @@ document.addEventListener('DOMContentLoaded', () => {
   $('btn-trade-sell').addEventListener('click', () => place('sell'));
   renderPaper();
 
+  function toggleIndicator(chart){chart.runner.toggle();}
+  charts.forEach(c=>c.onIndicatorToggle=()=>toggleIndicator(c));
+
   // Settings and scale controls.
   const appearanceStore=Workspace.read('terminal_chart_settings_v1',{});
-  charts.forEach(c=>ChartAppearance.apply(c,{...ChartAppearance.defaults(colors),...(appearanceStore[c.id]||{})}));
+  const oldProfiles=structuredClone(appearanceStore);
+  charts.forEach(c=>{const profile=ChartAppearance.desktopProfile(appearanceStore[c.id],colors,c.symbol);appearanceStore[c.id]=profile;ChartAppearance.apply(c,profile);});
+  if(JSON.stringify(oldProfiles)!==JSON.stringify(appearanceStore)){
+    const backupKey='terminal_desktop_appearance_before_v1';
+    if(Workspace.read(backupKey,null)||Workspace.write(backupKey,{profiles:oldProfiles,legacyColors:colors}))Workspace.write('terminal_chart_settings_v1',appearanceStore);
+  }
   const chartSettings=new ChartSettings(()=>active,(chart,settings)=>{
     const next={...Workspace.read('terminal_chart_settings_v1',{}),[chart.id]:settings};
     if(!Workspace.write('terminal_chart_settings_v1',next))return false;
@@ -269,61 +245,31 @@ document.addEventListener('DOMContentLoaded', () => {
     if(chart.sessionMode!==settings.session){stopReplay();chart.sessionMode=settings.session;chart.renderCurrentTimeframe();saveWorkspace();}
     updateHeader();return true;
   });
-  const oldVisibility = Workspace.read('terminal_toolbar_visibility_v1', {}) || {};
-  const toolbarVisibility = Workspace.read('terminal_cluster_visibility_v2', null) || {
-    topLeft:oldVisibility.topbar !== false, topRight:oldVisibility.topbar !== false,
-    sidebar:oldVisibility.sidebar !== false,
-    bottomLeft:oldVisibility.bottombar !== false, bottomRight:oldVisibility.bottombar !== false
-  };
-  const savedOpacity = Workspace.read('terminal_toolbar_opacity_v1', 100);
-  let toolbarOpacity = Number.isFinite(savedOpacity) ? Math.max(0, Math.min(100, savedOpacity)) : 100;
-  const toolbarElements = {
-    topLeft:document.querySelector('.topbar-left'), topRight:document.querySelector('.topbar-right'),
-    sidebar:$('left-sidebar'), bottomLeft:document.querySelector('.bottom-ranges'), bottomRight:document.querySelector('.bottom-meta')
-  };
-  function applyToolbarVisibility() {
-    for (const [key, element] of Object.entries(toolbarElements)) {
-      element.hidden = toolbarVisibility[key] === false;
-      $(`set-show-${key}`).checked = !element.hidden;
-    }
-    document.documentElement.style.setProperty('--toolbar-opacity', String(toolbarOpacity / 100));
-    $('set-toolbar-opacity').value = 100 - toolbarOpacity;
-    $('toolbar-opacity-value').value = `${100 - toolbarOpacity}%`;
-  }
-  Object.keys(toolbarElements).forEach(key => $(`set-show-${key}`).addEventListener('change', event => {
-    toolbarVisibility[key] = event.target.checked;
-    Workspace.write('terminal_cluster_visibility_v2', toolbarVisibility);
-    applyToolbarVisibility();
-  }));
-  $('set-toolbar-opacity').addEventListener('input', event => {
-    const value = Number(event.target.value);
-    toolbarOpacity = 100 - value;
-    document.documentElement.style.setProperty('--toolbar-opacity', String(toolbarOpacity / 100));
-    $('toolbar-opacity-value').value = `${value}%`;
-    Workspace.write('terminal_toolbar_opacity_v1', toolbarOpacity);
-  });
-  applyToolbarVisibility();
-  function openSettings() { applyToolbarVisibility(); chartSettings.open(); }
-  $('btn-settings').addEventListener('click',openSettings);
+  $('btn-settings').addEventListener('click',()=>chartSettings.open());
+  charts.forEach(c=>c.onChartSettings=()=>{activate(c);chartSettings.open();});
+  desktop=new DesktopShell({charts,getActive:()=>active,getMarkets:()=>cache,getAlerts:()=>alerts,drawing,onIndicatorToggle:toggleIndicator,onSymbol:symbol=>document.querySelector(`.symbol-item[data-sym="${symbol}"]`)?.click(),onAlertRemove:index=>{alerts=alerts.filter((_,i)=>i!==index);Workspace.write('terminal_alerts_v1',alerts);refreshAlertLines();}});
+  new ToolbarClusters(()=>chartSettings.open(),()=>{desktop.fitToolbar?.();charts.forEach(c=>c.positionSymbolBadge());});
+  new ChartContextMenu({charts,drawing,desktop,activate,openAlert});
   document.querySelectorAll('.scale-toggle').forEach(button => button.addEventListener('click', () => {
     if (button.textContent.trim() === 'auto') active.chart.priceScale('right').applyOptions({ autoScale: true });
     else { const mode = button.textContent.trim() === '%' ? LightweightCharts.PriceScaleMode.Percentage : LightweightCharts.PriceScaleMode.Logarithmic; active.chart.priceScale('right').applyOptions({ mode: button.classList.contains('active') ? 0 : mode }); document.querySelectorAll('.scale-toggle').forEach(b => { if (b !== button) b.classList.remove('active'); }); button.classList.toggle('active'); }
   }));
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { document.querySelectorAll('.modal.show').forEach(closeModal); $('layout-popover').classList.remove('show'); }
+    if (event.key === 'Escape') { document.querySelectorAll('.modal.show:not(#settings-modal)').forEach(closeModal); $('layout-popover').classList.remove('show'); }
     if (event.target.closest('input, textarea, select, [contenteditable]')) return;
-    if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); openSettings(); }
     if (event.altKey && event.key.toLowerCase() === 'r') { event.preventDefault(); sync.syncEnabled ? sync.resetAllCharts() : active.resetView(); }
+    if (event.altKey && event.key.toLowerCase() === 'a') { event.preventDefault(); openAlert(active); }
     if (event.key === 'F10') { event.preventDefault(); replayNext(); }
   });
 
   function statusText() {
-    const stale = bridge.state === 'connected' && Date.now() / 1000 - bridge.last_update > 5;
-    $('connection-status').dataset.state = stale ? 'stale' : bridge.state;
-    $('connection-status').textContent = stale ? 'Nguồn chậm · dữ liệu cũ' : bridge.state === 'connected' ? 'TradingView · đã kết nối' : bridge.state === 'connecting' ? 'Đang kết nối…' : 'Mất nguồn · dữ liệu đã lưu';
-    $('connection-status').title = bridge.message || '';
-    charts.forEach(c=>{c.marketLive=live(c.symbol);if(c.appearance?.marketStatus)c.updateLegend(c.bars.at(-1));c.updateCountdown?.();});
-    updateHeader();
+    const stale=bridge.state==='connected'&&Date.now()/1000-bridge.last_update>5,now=Date.now()/1000;
+    const inSession=TerminalTime.activeSession(now,active.metadata),sourceError=(bridge.sources||[]).find(s=>s.symbol===active.symbol&&s.timeframe===active.currentTimeframe&&s.error);
+    $('connection-status').dataset.state=sourceError?'disconnected':stale&&inSession?'stale':bridge.state;
+    $('connection-status').textContent=bridge.state==='backend_error'?bridge.message:sourceError?'Lỗi nguồn · dữ liệu đã lưu':bridge.state==='connected'&&!inSession?'Nghỉ phiên · giữ giá cuối':stale?'Nguồn gián đoạn · dữ liệu đã lưu':bridge.state==='connected'?'TradingView · đã kết nối':bridge.state==='connecting'?'Đang kết nối…':'Mất nguồn · dữ liệu đã lưu';
+    $('connection-status').title=sourceError?.error||bridge.message||'';
+    charts.forEach(c=>{const source=(bridge.sources||[]).find(s=>s.symbol===c.symbol&&s.timeframe===c.currentTimeframe);c.marketLive=bridge.state==='connected'&&source&&!source.error&&now-source.updated<8;const closed=!TerminalTime.activeSession(now,c.metadata);c.sourceBadge.hidden=c.marketLive||(closed&&bridge.state==='connected'&&!source?.error)||c.replayMode;c.sourceBadge.textContent=source?.error?`${c.symbol} · lỗi nguồn`:`${c.symbol} · ${c.bars.length?'dữ liệu đã lưu':'chờ nguồn'}`;c.sourceBadge.title=source?.error||'';if(c.symbolBadge)c.symbolBadge.title=c.marketLive?`${c.symbol} · Live`:closed?'Nghỉ phiên':c.sourceBadge.textContent;if(c.appearance?.marketStatus)c.updateLegend(c.bars.at(-1));if(!c.container.hidden)c.updateCountdown?.();});
+    updateHeader();desktop?.refresh();
   }
   function receive(message) {
     if (message.type === 'bridge_status') { bridge = message; statusText(); return; }
@@ -332,68 +278,52 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!symbols.includes(symbol) || !TF_MAP[tf] || !['history', 'tick'].includes(type)) return;
     const data = cache.get(symbol) || {};
     if (message.metadata) data.metadata = message.metadata;
-    if (type === 'history') data[tf] = MarketData.clean(message.bars);
-    else data[tf] = MarketData.clean([...(data[tf] || []), message.bar]).slice(-1500);
+    const previousBars=data[tf];
+    data[tf]=BridgeProtocol.bars(previousBars,message);
     cache.set(symbol, data);
+    if(data[tf]===previousBars)return;
+    if(replay)replay.marketVersion=(replay.marketVersion||0)+1;
     for (const c of charts.filter(c => c.symbol === symbol)) {
       c.metadata = data.metadata || c.metadata;
+      if(c.container.hidden){if(tf==='1m')c.rawBars=data[tf];else c.htfData[tf]=data[tf];continue;}
       if (tf === '1m' && type === 'tick') c.updateBar(message.bar);
       else if (tf === '1m') c.setData(data[tf]);
       else c.setHtfData(tf, data[tf]);
       if (c.savedRange && c.bars.length) { c.chart.timeScale().setVisibleLogicalRange(c.savedRange); c.savedRange = null; }
     }
     // All indicators can depend on other symbols, even when no chart displays those symbols.
-    charts.filter(c => c.symbol !== symbol).forEach(c => c.runner.schedule());
+    charts.filter(c => c.symbol !== symbol&&!c.container.hidden).forEach(c => c.runner.schedule());
     if (tf === '1m' && type === 'tick' && live(symbol)) { paper.tick(symbol, message.bar.close); checkAlerts(symbol, message.bar.close); renderPaper(); }
     if (tf === '1m' && type === 'history' && message.source === 'live' && live(symbol) && data[tf].length) { paper.quotes.set(symbol, { price: data[tf].at(-1).close, received: Date.now() }); renderPaper(); }
-    updateHeader();
+    replay?.refresh();updateHeader();
   }
   async function connect() {
     clearTimeout(reconnect);
-    let port = 8080;
-    try { const response = await fetch('/health', { signal: AbortSignal.timeout(3000) }); const health = await response.json(); port = health.ws_port || port; } catch { /* Old bridge compatibility; status stays disconnected until data arrives. */ }
-    socket = new WebSocket(`ws://${location.hostname || 'localhost'}:${port}`);
+    let port;
+    try {
+      const response=await fetch('/health',{signal:AbortSignal.timeout(3000),cache:'no-store'});
+      if(!response.ok)throw Error(response.status===404?'Backend cũ ở cổng này; chạy lại start_terminal.bat.':`Backend HTTP ${response.status}`);
+      port=BridgeProtocol.health(await response.json()).ws_port;
+    }catch(error){bridge={state:'backend_error',symbols:[],message:error.message||'Không kết nối được backend'};statusText();reconnect=setTimeout(connect,retry);retry=Math.min(retry*2,15000);return;}
+    const wsHost=location.hostname==='localhost'?'127.0.0.1':location.hostname||'127.0.0.1';
+    socket = new WebSocket(`ws://${wsHost}:${port}`);
     window.terminalWs = socket;
-    socket.onopen = () => { retry = 1000; };
+    socket.onopen = () => { retry = 1000;features?.subscribe(); };
     socket.onmessage = event => { try { receive(JSON.parse(event.data)); } catch (error) { console.error(error); toast(`Dữ liệu không hợp lệ: ${error.message}`, 'alert'); } };
     socket.onerror = () => socket.close();
     socket.onclose = () => { bridge = { ...bridge, state: 'disconnected' }; statusText(); reconnect = setTimeout(connect, retry); retry = Math.min(retry * 2, 15000); };
   }
   $('btn-refresh-htf').addEventListener('click', () => { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ action: 'refresh' })); else toast('Backend chưa kết nối', 'alert'); });
-  function seedDemoData() {
-    const basePrices = { 'NQ1!': 18500, 'ES1!': 5400, 'YM1!': 39500, 'CL1!': 78 };
-    const now = Math.floor(Date.now() / 1000);
-    const minute = 60;
-    symbols.forEach(sym => {
-      if (!cache.has(sym)) {
-        const bars = [];
-        let price = basePrices[sym] || 1000;
-        const count = 300;
-        for (let i = count; i >= 0; i--) {
-          const t = now - i * minute;
-          const delta = (Math.sin(i / 8) + Math.cos(i / 4)) * (price * 0.0012) + (Math.random() - 0.49) * (price * 0.0018);
-          const open = price;
-          const close = price + delta;
-          const high = Math.max(open, close) + Math.random() * (price * 0.001);
-          const low = Math.min(open, close) - Math.random() * (price * 0.001);
-          bars.push({ time: t, open: Number(open.toFixed(2)), high: Number(high.toFixed(2)), low: Number(low.toFixed(2)), close: Number(close.toFixed(2)), volume: Math.floor(Math.random() * 500 + 100) });
-          price = close;
-        }
-        cache.set(sym, {
-          '1m': bars,
-          metadata: { exchange: 'CME', description: sym, tickSize: 0.25, pointValue: 20 }
-        });
-      }
-    });
-    charts.forEach(c => hydrate(c));
-  }
-  seedDemoData();
+  features = new TerminalFeatures({charts,sync,drawing,activate,getActive:()=>active,getReplay:()=>replay,hydrate,saveWorkspace,updateHeader,chartSettings,changeSymbol,subscribe:()=>{
+    if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify({action:'subscribe',charts:features.visibleCharts().map(c=>({symbol:c.symbol,timeframe:c.currentTimeframe}))}));
+  }});
+  replay = new TerminalReplay({charts,getCharts:()=>features.visibleCharts(),getActive:()=>active,toast,saveWorkspace});
   refreshAlertLines();connect();
-  setInterval(() => { const zone=active.appearance?.timezone||'America/New_York';$('live-clock').textContent = new Intl.DateTimeFormat('en-US', { timeZone:zone, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12:active.appearance?.hourFormat==='12-hours' }).format(new Date())+' '+zone.split('/').at(-1).replaceAll('_',' ');statusText(); }, 1000);
+  setInterval(() => { const zone=active.appearance?.timezone||'America/New_York';$('live-clock').textContent = new Intl.DateTimeFormat('en-US', { timeZone:zone, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12:active.appearance?.hourFormat==='12-hours' }).format(new Date((replay?.running?replay.clock:Date.now()/1000)*1000))+' '+zone.split('/').at(-1).replaceAll('_',' ');statusText(); }, 1000);
   window.addEventListener('beforeunload', () => {
     clearTimeout(saveTimer);
     Workspace.write('terminal_workspace_v1', { active: active.id, layout: grid.className, charts: charts.map(c => ({ symbol: c.symbol, timeframe: c.currentTimeframe, sessionMode: c.sessionMode, range: c.savedRange || c.chart.timeScale().getVisibleLogicalRange() })) });
     // Drawings are saved on mutation; an older open tab must not overwrite them on unload.
-    charts.forEach(c => c.runner.stop());
+    charts.forEach(c => c.runner.stop());replay?.persist();
   });
 });

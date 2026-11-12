@@ -9,6 +9,15 @@ Terminal cá nhân dùng dữ liệu từ TradingView Desktop qua CDP `9222`. Fr
 3. Mở TradingView Desktop với remote debugging `9222`, tải các mã NQ/ES/YM cần dùng.
 4. Chạy `start_terminal.bat`, mở http://localhost:3000.
 
+### Khởi động tự động nguồn giá
+
+Chạy `start_terminal.bat`: launcher mở TradingView Desktop và backend, sau đó mở web.
+Backend giữ nguồn riêng cho từng cặp mã/timeframe đang hiển thị. Đổi timeframe của một chart không đổi nguồn của chart khác; các chart không được chọn vẫn nhận cập nhật. Không cần mở từng mã thủ công.
+Khi backend còn chạy, mở lại web cũng yêu cầu mở TradingView nếu đã tắt.
+Trình duyệt không thể khởi động một backend đang tắt: trong trường hợp đó hãy chạy launcher.
+Các nguồn dùng phiên đăng nhập/quyền dữ liệu hiện có của TradingView. Nếu cần đăng nhập, người dùng phải tự hoàn tất.
+Lịch sử của 13 khung đã chốt được lưu riêng; các khung đang dùng có subscription ổn định, lấy nến trực tiếp cho ETH. Dữ liệu giữ trong RAM và có bản lưu ổ đĩa. Tải thêm theo đợt 5.000 nến tới khi nguồn báo hết hoặc RAM trống dưới 2 GiB; độ sâu tùy quyền dữ liệu và nguồn. Các khung không đang đọc giữ snapshot đã lưu. RTH vẫn dùng lọc/tổng hợp phiên từ dữ liệu phút.
+
 Launcher có thể mở TradingView nếu chưa chạy; không force-close workspace đang mở. Nếu cổng 3000 do server cũ chiếm, đóng server cũ trước khi khởi động bản này.
 
 ## Có trong bản refactor đầu
@@ -18,7 +27,7 @@ Launcher có thể mở TradingView nếu chưa chạy; không force-close works
 - ETH và RTH theo metadata session/DST/early close từ TradingView. RTH dựng từ nến 1m đang có; lịch sử RTH không sâu hơn nguồn phút đã tải.
 - Hình vẽ lưu theo chart và mã. Chọn để mở toolbar, kéo điểm/hình, double-click mở setting; Style, Text, Coordinates, Visibility, template, khóa, clone, thứ tự lớp, undo/redo.
 - Demo account có balance/margin tùy chọn; Market/Limit/Stop, SL/TP, vị thế và sổ lệnh được lưu cục bộ. Giá mô phỏng là last quan sát được, không có bid/ask giả.
-- Indicator JavaScript người dùng nhập/lưu/import `.js`, chạy trong Worker có timeout 4 giây; không có indicator dựng sẵn hoặc EMA mẫu.
+- Indicators có My scripts / Favorites / On chart, lưu code và nhiều instance độc lập trên mỗi chart. Pine v6 thử nghiệm (PineTS) hoặc JavaScript chạy trong Worker; không tự thêm indicator mẫu. Xem [INDICATORS.md](INDICATORS.md).
 - Backend lấy mã/timeframe từ `symbolInfo` của nguồn có nến; không đoán theo `sds_N` hoặc tên indicator. Không tự đổi timeframe của TradingView.
 - Reconnect có backoff; snapshot dữ liệu đang được TradingView tải mỗi 20 giây, tail poll mỗi giây; sửa nến đến trễ/volume-only, atomic persistence và backup.
 
@@ -28,8 +37,8 @@ Mở `/?engine=v5` để thử pane native trên Lightweight Charts 5.3.0; `/lin
 
 ## Giới hạn cần biết
 
-- **Đã có QS Stacks+ JavaScript và QT+ test port để nhập thủ công. QT+ chưa tương đương Pine hoàn chỉnh.** Xem [cách test và giới hạn](frontend/indicators/README.md). Không hỗ trợ dán Pine nguyên bản.
-- Worker hỗ trợ series line/histogram, overlay drawings, pane ribbon riêng, tables và màu thân nến. Tín hiệu/alert Pine chưa được xác nhận parity.
+- **Đã có QS Stacks+ JavaScript và QT+ test port để nhập thủ công. QT+ chưa tương đương Pine hoàn chỉnh.** Xem [cách test và giới hạn](frontend/indicators/README.md). Có thể dán Pine v6 vào runtime thử nghiệm; chưa tương thích đầy đủ mọi script/import.
+- Worker hỗ trợ series line/histogram/area, overlay drawings, pane ribbon riêng, tables và màu thân nến. Tín hiệu/alert Pine chưa được xác nhận parity.
 - Chỉ lấy các mã/timeframe hiện có trong chart nguồn và cache. Chưa có dịch vụ tải lịch sử độc lập, warmup HTF chủ động hoặc xác nhận đủ 5.000 nến cho QT+.
 - Chưa hoàn thiện toàn bộ công cụ TradingView: các công cụ hiện có là rectangle, trendline, text, fib, position box và measure. Visibility lưu cả các nhóm thời gian ngoài UI nhưng hiện UI chỉ có phút/giờ/D/W.
 - Paper engine khớp theo các mẫu giá nhận được khi backend/trình duyệt hoạt động; chưa có mô phỏng tick-by-tick, phí/slippage, margin liquidation, amend/drag lệnh hoặc giao dịch trong replay. Không coi là parity broker/TradingView đầy đủ.
@@ -47,7 +56,7 @@ File nhập định nghĩa `function calculate(bars, context)` hoặc `const ind
 - `candleColors`: `[{time,color}]` cho màu thân nến; `warnings` hiện trên status. `events` chỉ là kết quả tính, chưa có notification dispatcher.
 - `context`: `symbol`, `timeframe`, `metadata`, `settings`, `markets` chứa dữ liệu đa mã/khung và `viewport`.
 
-Script được lưu theo chart. Worker là cơ chế giữ UI đáp ứng, không phải sandbox bảo mật cho code không tin cậy. Không có module import/Pine transpilation tự động.
+Code lưu trong thư viện local, mỗi lần Add tạo instance riêng theo chart. Worker giữ UI đáp ứng; chỉ chạy code bạn tin cậy. Pine v6 dùng PineTS vendored và provider local; external import thiếu source sẽ báo lỗi, không tải từ tài khoản TradingView.
 
 ## Kiểm tra
 
@@ -58,30 +67,43 @@ node --test tests/*.test.cjs
 
 Biến môi trường cho kiểm thử/preview: `TERMINAL_HTTP_PORT`, `TERMINAL_WS_PORT`, `TERMINAL_CDP_PORT`, `TERMINAL_DATA_DIR`, `TERMINAL_OFFLINE=1`. Dùng data dir riêng để không sửa cache thật.
 
-`TRADINGVIEW_DATA_EXTRACTION_SPEC.md`, nếu có, là tài liệu mô tả cơ chế cũ; không coi resolution cycling/anti-sleep trong đó là hành vi bản backend mới.
+`AGENTS.md` là nguồn yêu cầu và nhật ký chính. `TRADINGVIEW_DATA_EXTRACTION_SPEC.md`, nếu có, là tài liệu mô tả cơ chế cũ; không coi resolution cycling/anti-sleep trong đó là hành vi bản backend mới.
 
-Lightweight Charts vendored giữ thông báo giấy phép và attribution của TradingView. Các bản JavaScript chuyển từ attachment giữ notice MPL-2.0/attribution; không upload attachment Pine gốc hoặc thư viện ENIGMA.
+## Repo và quyền truy cập
+
+Repo đích: https://github.com/CODENOPRO/TradingViewPremium . Sau mỗi đợt sửa đã kiểm tra: ghi tiếp `AGENTS.md`, commit, push; không force-push. Cache thị trường, metadata, backup, file tạm và secrets không được commit.
+
+Mời người khác: mở repo → **Settings → Collaborators & teams → Add people**, nhập username GitHub và gửi lời mời. Sau khi họ chấp nhận, họ có thể chọn **Code → Download ZIP** hoặc `git clone` bằng tài khoản được cấp quyền.
+
+Repo cá nhân private không có vai trò collaborator chỉ đọc: collaborator có cả quyền push. Nếu chỉ muốn chia sẻ quyền xem/tải, dùng repo Organization với vai trò **Read**, hoặc public để mọi người đọc/tải mà không cần mời. Không tự đổi visibility hoặc gửi lời mời thay người dùng. Tham khảo [GitHub repository permissions](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/repository-access-and-collaboration/permission-levels-for-a-personal-account-repository).
+
+PineTS 0.13.1 giữ LICENSE AGPL-3.0-only và provenance trong frontend/vendor/pinets-0.13.1. Lightweight Charts vendored giữ thông báo giấy phép và attribution của TradingView. Các bản JavaScript chuyển từ attachment giữ notice MPL-2.0/attribution; không upload attachment Pine gốc hoặc thư viện ENIGMA.
 ## Chart Settings
 
 Nút ⚙ mở bảy mục cài đặt theo TradingView Desktop, có preview/Cancel và lưu riêng từng chart. Xem [CHART_SETTINGS.md](CHART_SETTINGS.md) để biết các mục đã nối hành vi và phần còn thiếu dữ liệu/chức năng.
 
-## Cài đặt và cập nhật
+Bốn cụm nổi trên trái/phải, dưới trái/phải và thanh vẽ trái nằm trên chart phủ kín cửa sổ. Trong Settings → Cụm công cụ trên chart có bật/tắt từng cụm và độ trong suốt nền; các tùy chọn này lưu ngay, riêng với preview/Cancel của chart. `Ctrl + ,` mở lại Settings kể cả khi đã ẩn hết. Watchlist/Objects/Data/Alerts/Editor nằm trong menu Layout thay cho dải đen cố định bên phải.
 
-Repo public: https://github.com/zTadqa/TradingTerminal
+Header tên mã/OHLC và BUY/SELL trên từng chart đã ẩn theo yêu cầu giao diện gọn; lệnh demo dùng nút Paper Trading. Góc dưới dùng biểu tượng NQ/ES/YM, tự tránh thanh vẽ/cụm dưới và đổi theo mã; CL chưa có asset nên không gán logo của mã khác. Thanh trên thiếu chỗ sẽ đưa các thao tác phụ vào `…`. Logo attribution trên chart tắt bằng tùy chọn chính thức; notice được giữ trong vendor và link TradingView nằm trong Settings. Nguồn: [LayoutOptions.attributionLogo](https://tradingview.github.io/lightweight-charts/docs/api/interfaces/LayoutOptions#attributionlogo).
 
-Cài lần đầu bằng Git để nhận cập nhật:
+Crosshair đồng bộ dùng cùng thời điểm và độ cao chuột tương đối theo từng vùng giá, không ghim vào close/OHLC của chart đích. Nếu đích thiếu nến đúng thời điểm thì xóa crosshair đồng bộ thay vì nhảy về cây cũ; khung lớn hơn dùng nến thực chứa thời điểm đó. Ra khỏi vùng giá hoặc vào pane indicator thì xóa crosshair ở các chart khác. Vùng chart mặc định dùng con trỏ dấu cộng; hành vi đồng bộ kéo/zoom không đổi.
 
-```powershell
-git clone https://github.com/zTadqa/TradingTerminal.git
-cd TradingTerminal
-python -m pip install -r requirements.txt
-.\start_terminal.bat
-```
+Đối chiếu toàn màn hình và panel desktop: [DESKTOP_PARITY.md](DESKTOP_PARITY.md).
 
-Launcher kiểm tra nhánh main mỗi lần mở và tải bản mới trước khi chạy backend. Cập nhật dùng fast-forward. Nếu có sửa đổi local hoặc file mới chưa commit, launcher giữ bản đang cài và hiển thị lý do bỏ qua cập nhật. Khi mất mạng, ứng dụng tiếp tục dùng bản đã cài. Thay đổi requirements.txt sẽ chạy pip để cập nhật dependency.
+Nếu web báo backend cũ: đóng server Python cũ rồi chạy lại `start_terminal.bat`. `/health` của bản hiện tại có `service: trading-terminal`, `protocol_version: 2` và cổng WS. Dữ liệu chỉ live cho mã đang được tải trong TradingView; mã thiếu nguồn giữ cache và hiện trạng thái dữ liệu đã lưu.
 
-Ứng dụng đang mở nhận bản mới ở lần khởi động kế tiếp. Hãy đóng backend cũ trước khi mở lại launcher. Bản tải ZIP cần tải lại thủ công hoặc chuyển sang git clone để cập nhật tự động. Dữ liệu giá/cache, tài khoản demo, script và hình vẽ của mỗi người được lưu trên máy họ. Mỗi người cần TradingView Desktop của riêng mình để có giá live.
+## Bộ vẽ được yêu cầu khảo sát
 
-## Giao diện
+Đã đọc lightweight-charts-drawing của deepentropy; chưa thay renderer v4 hoặc migrate hình cũ. Quyết định và khác biệt tại [DRAWING_REPO_REVIEW.md](DRAWING_REPO_REVIEW.md).
 
-Chart phủ kín vùng ứng dụng. Năm cụm công cụ bo tròn nổi trên chart, bật/tắt riêng và chỉnh độ trong suốt nền chung trong Settings → Cụm công cụ trên chart. Ctrl+, mở Settings khi các cụm đã ẩn.
+
+Lưu ý quyền nguồn đã quan sát: tài khoản TradingView Basic hiện chặn custom interval khi chọn 6h. Khung 6h/12h chưa được nạp trực tiếp; backend ghi hạn chế trong /health và không tự ghép nến thay thế. Các khung chuẩn gồm cả 1M/3M đã có dữ liệu thực.
+
+
+### Giao diện và Replay
+- Layout chỉ còn biểu tượng; menu có bố cục1–16 chart, các kiểu chia ô và5 tùy chọn Sync riêng: Symbol/Interval/Crosshair/Time/Date range. Interval mặc định tắt để chọn khung độc lập.
+- Trong Layout có Chart settings và Hide toolbar text. Chế độ ẩn chữ giữ tên mã/timeframe; tên thao tác hiện cạnh logo khi hover hoặc focus.
+- Favourite: nhấp phải công cụ vẽ để thêm/bỏ sao, hoặc dùng nút☆ trên thanh Favourite. Kéo bằng tay nắm⠿; vị trí và danh sách lưu cục bộ.
+- Fullscreen ẩn thanh vẽ dọc và các cụm điều khiển khác, giữ Favourite. Rê chuột vào mép trên để hiện timeframe; Esc thoát fullscreen.
+- Replay dùng dữ liệu native đã lưu và chỉ phát nến đã đóng theo cùng thời gian UTC giữa các chart. Có All/Current chart, chọn nến/ngày/giờ/random, tiến/lùi, tốc độ0.5–10 bước/giây và lưu phiên. Space phát/dừng, F10 hoặc Alt+Right tiến, Alt+Left lùi. Đổi timeframe giữ thời điểm Replay. Indicator chỉ nhận dữ liệu đã đóng tại đồng hồ Replay. Paper Trading trong Replay chưa triển khai.
+- Countdown theo khung từng chart, lịch tháng/quý, timezone/session và correction đóng sớm nguồn cung cấp. Khung không có nguồn cập nhật được đánh dấu nguồn chậm; không tự tạo tick hoặc nội suy giá trong Replay.

@@ -4,8 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Trading Terminal</title>
-  <link rel="icon" type="image/svg+xml" href="assets/terminal-mark.svg">
   <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/imported_toolbars.css">
+  <link rel="stylesheet" href="css/terminal_features.css">
+  <link rel="stylesheet" href="css/terminal_polish.css">
+  <link rel="stylesheet" href="css/terminal_companions.css">
 </head>
 <body>
 
@@ -45,8 +48,16 @@
         <button class="tf-btn" data-tf="4h">4h</button>
         <button class="tf-btn" data-tf="D">D</button>
         <button class="tf-btn" data-tf="W">W</button>
+        <button class="tf-btn" data-tf="30m">30m</button>
+        <button class="tf-btn" data-tf="2h">2h</button>
+        <button class="tf-btn" data-tf="6h">6h</button>
+        <button class="tf-btn" data-tf="12h">12h</button>
+        <button class="tf-btn" data-tf="1M">1M</button>
+        <button class="tf-btn" data-tf="3M">3M</button>
         <button id="btn-refresh-htf" class="btn-icon" style="padding: 2px 6px; font-size: 11px; margin-left: 2px;" title="Đọc lại dữ liệu đang có trên TradingView, không đổi timeframe gốc">
-          <svg class="tt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 8a8 8 0 1 0 0 8M20 3v5h-5"/></svg>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+          </svg>
           <span id="htf-sync-pill" style="font-size: 11px; font-weight: 500; color: #787b86;">Refresh</span>
         </button>
       </div>
@@ -74,10 +85,10 @@
     </div>
 
     <div class="topbar-right">
-      <button id="btn-paper" class="btn-icon" title="Tài khoản mô phỏng"><svg class="tt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 7V5a2 2 0 0 0-2-2H5a3 3 0 0 0 0 6h15v12H5a3 3 0 0 1-3-3V6"/><path d="M20 12h-6v5h6M16 14.5h.01"/></svg><span>Paper Trading</span></button>
+      <button id="btn-paper" class="btn-icon" title="Tài khoản mô phỏng">Paper Trading</button>
       <!-- Sync Button -->
       <button id="btn-sync" class="btn-icon active" title="Time & Crosshair Sync">
-        <svg class="tt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m10 14 4-4M8 16l-1 1a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0m0 12a4 4 0 0 0 6 0l5-5a4 4 0 0 0-6-6l-1 1" transform="translate(1 0) scale(.92)"/></svg><span>Sync: ON</span>
+        <span>🔗 Sync: ON</span>
       </button>
 
       <!-- 9-Layout Selector Button -->
@@ -280,9 +291,9 @@
       <!-- BAR REPLAY TOOLBAR (SLIDES UP FROM BOTTOM IN REPLAY MODE) -->
       <div id="replay-toolbar" class="replay-bar">
         <span class="replay-badge">REPLAY</span><span id="replay-position"></span>
-        <button id="btn-replay-prev" class="replay-btn" title="Lùi 1 nến"><svg class="tt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 5v14m14-14L8 12l11 7z"/></svg></button>
-        <button id="btn-replay-play" class="replay-btn" title="Play / Pause"><svg class="tt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m7 4 13 8-13 8z"/></svg><span>Play</span></button>
-        <button id="btn-replay-next" class="replay-btn" title="Tiến 1 nến (F10)"><svg class="tt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m5 4 11 8-11 8zM20 4v16"/></svg><span>Next</span></button>
+        <button id="btn-replay-prev" class="replay-btn" title="Lùi 1 nến">⏮</button>
+        <button id="btn-replay-play" class="replay-btn" title="Play / Pause">▶ Play</button>
+        <button id="btn-replay-next" class="replay-btn" title="Tiến 1 nến (F10)">⏭ Next</button>
         <button id="btn-replay-exit" class="replay-btn replay-exit" title="Thoát Replay">&times; Exit</button>
       </div>
 
@@ -366,14 +377,14 @@
       <div class="modal-body script-body">
         <div class="script-actions">
           <input id="indicator-name" class="search-input" aria-label="Tên indicator" placeholder="Tên indicator">
-          <label class="btn-secondary file-button">Nhập file .js<input id="indicator-file" type="file" accept=".js,.txt" hidden></label>
+          <label class="btn-secondary file-button">Nhập .pine / .js<input id="indicator-file" type="file" accept=".pine,.js,.txt" hidden></label>
         </div>
-        <p class="editor-help">JavaScript · calculate(bars, context) → { series, drawings, tables }. Chạy trong Worker riêng. Pine cần chuyển đổi trước.</p>
-        <textarea id="indicator-code" class="code-area" aria-label="Mã nguồn indicator" placeholder="Dán mã JavaScript indicator của bạn…" spellcheck="false"></textarea>
-        <label class="settings-label" for="indicator-settings">Thông số (JSON)</label>
-        <textarea id="indicator-settings" class="code-area settings-code" spellcheck="false">{}</textarea>
+        <p class="editor-help">Dán Pine Script //@version=6 hoặc JavaScript. Chạy trong Worker riêng; PineTS còn giới hạn tương thích và sẽ báo phần chưa hỗ trợ. Không cần chuyển tay sang JS.</p>
+        <textarea id="indicator-code" class="code-area" aria-label="Mã nguồn indicator" placeholder="Dán Pine Script v6 hoặc JavaScript indicator của bạn…" spellcheck="false"></textarea>
+        <details><summary class="settings-label">Advanced inputs (JSON)</summary><label class="settings-label" for="indicator-settings">Thông số (JSON)</label>
+        <textarea id="indicator-settings" class="code-area settings-code" spellcheck="false">{}</textarea></details>
       </div>
-      <div class="modal-footer"><button id="remove-indicator" class="btn-secondary">Gỡ indicator</button><button id="apply-indicator" class="btn-primary">Lưu &amp; chạy</button></div>
+      <div class="modal-footer"><button id="stop-indicator-run" class="btn-secondary">Dừng tính</button><button id="remove-indicator" class="btn-secondary">Gỡ indicator</button><button id="apply-indicator" class="btn-primary">Lưu &amp; chạy</button></div>
     </div>
   </div>
 
@@ -426,17 +437,18 @@
     <div class="modal-content chart-settings-dialog">
       <div class="modal-header"><span id="chart-settings-title">Settings</span><button id="close-settings" class="modal-close" aria-label="Close settings">×</button></div>
       <div class="chart-settings-layout"><nav class="chart-settings-nav" role="tablist" aria-label="Settings categories"></nav><div class="chart-settings-body" role="tabpanel"></div></div>
-        <details class="setting-section toolbar-settings">
-          <summary>Cụm công cụ trên chart</summary>
-          <label class="setting-row"><span>Trên trái</span><input type="checkbox" id="set-show-topLeft" checked></label>
-          <label class="setting-row"><span>Trên phải</span><input type="checkbox" id="set-show-topRight" checked></label>
-          <label class="setting-row"><span>Công cụ vẽ bên trái</span><input type="checkbox" id="set-show-sidebar" checked></label>
-          <label class="setting-row"><span>Dưới trái</span><input type="checkbox" id="set-show-bottomLeft" checked></label>
-          <label class="setting-row"><span>Dưới phải</span><input type="checkbox" id="set-show-bottomRight" checked></label>
-          <label class="setting-row"><span>Độ trong suốt nền các cụm</span><span class="toolbar-transparency"><input type="range" id="set-toolbar-opacity" min="0" max="100" step="5" value="0"><output id="toolbar-opacity-value">0%</output></span></label>
-          <p class="editor-help">Ctrl + , để mở Settings khi đã ẩn các cụm. Thay đổi thanh công cụ được lưu ngay.</p>
-        </details>
+      <details class="setting-section toolbar-settings" open>
+        <summary>Cụm công cụ trên chart</summary>
+        <label class="setting-row"><span>Trên trái</span><input type="checkbox" id="set-show-topLeft" checked></label>
+        <label class="setting-row"><span>Trên phải</span><input type="checkbox" id="set-show-topRight" checked></label>
+        <label class="setting-row"><span>Công cụ vẽ bên trái</span><input type="checkbox" id="set-show-sidebar" checked></label>
+        <label class="setting-row"><span>Dưới trái</span><input type="checkbox" id="set-show-bottomLeft" checked></label>
+        <label class="setting-row"><span>Dưới phải</span><input type="checkbox" id="set-show-bottomRight" checked></label>
+        <label class="setting-row"><span>Độ trong suốt nền các cụm</span><span class="toolbar-transparency"><input type="range" id="set-toolbar-opacity" min="0" max="100" step="5" value="0"><output id="toolbar-opacity-value" for="set-toolbar-opacity">0%</output></span></label>
+        <p class="editor-help">Ctrl + , mở Settings khi đã ẩn các cụm. Các thay đổi này được lưu ngay.</p>
+      </details>
       <p class="chart-settings-error" role="alert"></p>
+      <p class="library-credit">TradingView Lightweight Charts™ · <a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">TradingView, Inc.</a></p>
       <div class="modal-footer"><select id="chart-template" aria-label="Chart template"><option value="">Template</option><option value="save">Save template</option><option value="load">Apply template</option><option value="reset">Reset settings</option></select><button id="cancel-settings" class="btn-secondary">Cancel</button><button id="save-settings" class="btn-primary">Ok</button></div>
     </div>
   </div>
@@ -446,12 +458,12 @@
 
   <!-- SCRIPTS -->
   <!-- Official TradingView Lightweight Charts Engine -->
-  <script src="js/terminal_icons.js"></script>
   <script src="js/chart_loader.js"></script>
-  <link rel="stylesheet" href="css/terminal_icons.css">
   <script src="js/workspace.js"></script>
   <script src="js/market_data.js"></script>
+  <script src="js/bridge_protocol.js"></script>
   <script src="js/drawing_model.js"></script>
+  <script src="js/pine_painter.js"></script>
   <script src="js/chart_engine.js"></script>
   <script src="js/native_cycle_pane.js"></script>
   <script src="js/drawing_settings.js"></script>
@@ -459,9 +471,19 @@
   <script src="js/drawing_tools.js"></script>
   <script src="js/sync_controller.js"></script>
   <script src="js/indicator_runner.js"></script>
+  <script src="js/indicator_pane_stack.js"></script>
+  <script src="js/indicator_collection.js"></script>
+  <script src="js/indicator_library.js"></script>
   <script src="js/indicator_settings.js"></script>
   <script src="js/paper_trading.js"></script>
   <script src="js/chart_settings.js"></script>
+  <script src="js/terminal_icons.js"></script>
+  <script src="js/desktop_shell.js"></script>
+  <script src="js/toolbar_clusters.js"></script>
+  <script src="js/chart_context_menu.js"></script>
+  <script src="js/terminal_features.js"></script>
+  <script src="js/terminal_polish.js"></script>
+  <script src="js/terminal_companions.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

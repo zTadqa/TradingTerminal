@@ -3,6 +3,7 @@ import asyncio
 import copy
 import ctypes
 from functools import partial
+import hashlib
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import logging
@@ -16,23 +17,51 @@ from urllib.parse import urlencode, parse_qs, urlsplit
 
 import websockets
 from websockets.sync.client import connect as sync_connect
-from market_store import MarketStore, RESOLUTIONS, SYMBOLS
-from companion_services import EconomicCalendar, music_metadata, resolve_music_share
-calendar_service = EconomicCalendar()
+from market_store import MarketStore, RESOLUTIONS, SYMBOLS, atomic_json
+from companion_services import EconomicCalendar, music_metadata, resolve_music_share, MusicProviderError
+from native_warmup import NativeWarmup, NATIVE_INTERVALS, SourceChanged
+from derived_history import aggregate_six_hour
 
 ROOT = Path(__file__).resolve().parent
+APP_ROOT = str(ROOT.parent.resolve())
+
+
+def _compute_build_id():
+    h = hashlib.sha1()
+    for rel in (ROOT / 'bridge_server.py', ROOT.parent / 'frontend' / 'index.html'):
+        try:
+            h.update(rel.read_bytes())
+        except OSError:
+            pass
+    return h.hexdigest()[:12]
+
+
+BUILD_ID = _compute_build_id()
+DATA_DIR = Path(os.getenv('TERMINAL_DATA_DIR', str(ROOT)))
 HTTP_PORT = int(os.getenv('TERMINAL_HTTP_PORT', '3000'))
 WS_PORT = int(os.getenv('TERMINAL_WS_PORT', '8080'))
 CDP_PORT = int(os.getenv('TERMINAL_CDP_PORT', '9222'))
-store = MarketStore(os.getenv('TERMINAL_DATA_DIR', str(ROOT)))
+store = MarketStore(str(DATA_DIR))
+calendar_service = EconomicCalendar(history_path=DATA_DIR / 'calendar_cache.json')
+state_lock = threading.RLock()
 clients = set()
 refresh = asyncio.Event()
+reconnect_source = asyncio.Event()
 status = {'type': 'bridge_status', 'state': 'connecting', 'last_update': None,
           'message': 'Đang kết nối TradingView', 'symbols': [],
-          'service': 'trading-terminal', 'protocol_version': 2, 'pid': os.getpid()}
+          'service': 'trading-terminal', 'protocol_version': 2,
+          'pid': os.getpid(), 'root': APP_ROOT, 'build': BUILD_ID}
 history_progress = {}
 subscriptions = {}
+native_warmup = None
+pending_native = []
+pending_startup = False
+startup_preloaded = False
 source_updates = {}
+main_loop = None
+restart_tv_task = None
+active_cdp = None
+active_cdp_url = None
 source_config = Path(os.getenv('TERMINAL_DATA_DIR', str(ROOT))) / 'source_requests.json'
 try:
     last_requests = json.loads(source_config.read_text(encoding='utf-8'))
@@ -46,11 +75,51 @@ SOURCE_INFO_JS = r'''(() => {
  const widgets=typeof c.getAll==='function'?c.getAll():[c.activeChartWidget.value()];
  const charts=[];
  for(const widget of widgets){
-   const series=widget?.model()?.mainSeries(),info=series?.symbolInfo();
-   const symbol=info?.name||info?.ticker,resolution=series?.interval();
-   if(symbol&&resolution)charts.push({symbol:String(symbol).split(':').pop(),resolution:String(resolution)});
+   for(const series of widget?.model()?.dataSources()||[]){
+     const overlay=series.metaInfo?.()?.id==='Overlay@tv-basicstudies';
+     const info=series.symbolInfo?.()||(overlay?series._symbolSourceSymbolInfo?.value?.():null);
+     const symbol=info?.name||info?.ticker,resolution=series?.interval?.();
+     if(symbol&&resolution&&(!overlay||String(series.symbol()).split(':').pop()===String(symbol).split(':').pop()))charts.push({symbol:String(symbol).split(':').pop(),resolution:String(resolution)});
+   }
  }
  return charts.length?charts:null;
+})()'''
+
+# Use TradingView's native Overlay (the same OHLC pane as Compare -> New pane).
+# This operation is idempotent and never changes the user's main symbol/interval.
+ENSURE_PANES_JS = r'''(async () => {
+ const widget=window._exposed_chartWidgetCollection?.activeChartWidget.value();
+ if(!widget)throw Error('TradingView chart not ready');
+ if(window.__terminalPaneSetup)return {pending:true};
+ window.__terminalPaneSetup=true;
+ try{
+   const model=widget.model(),main=model.mainSeries();
+   const info=main.symbolInfo();if(!info)throw Error('Main symbol not resolved');
+   const supported=['NQ1!','ES1!','YM1!'];
+   const primary=String(info.name||info.ticker).split(':').pop();
+   if(!supported.includes(primary))throw Error('Open an NQ/ES/YM chart as the single source');
+   const created=[],woken=[];
+   for(const symbol of supported){
+     if(primary===symbol)continue;
+     const existing=model.dataSources().find(s=>s!==main&&s.metaInfo?.()?.id==='Overlay@tv-basicstudies'&&String(s.symbol?.()).split(':').pop()===symbol);
+     if(existing){
+       const visProp=existing.properties?.()?.childs?.()?.visible;
+       if(visProp?.value?.()===false||existing.isVisible?.()===false){
+         visProp?.setValue?.(true);
+         existing.setVisible?.(true);
+         woken.push(symbol);
+       }
+       existing.properties?.()?.childs?.()?.style?.setValue?.(1);
+       continue;
+     }
+     const study=await widget.addOverlayStudy((symbol==='YM1!'?'CBOT_MINI:':'CME_MINI:')+symbol,false,true);
+     if(!study)throw Error('TradingView did not allow a native pane for '+symbol);
+     study.properties?.()?.childs?.()?.visible?.setValue?.(true);
+     study.properties?.()?.childs?.()?.style?.setValue?.(1);
+     created.push({symbol,id:study.id()});
+   }
+   return {created,woken,resolution:String(main.interval())};
+ }finally{window.__terminalPaneSetup=false;}
 })()'''
 
 
@@ -64,27 +133,207 @@ def is_chart_target(target):
 def source_pairs(target):
     if not is_chart_target(target):
         return set()
-    with sync_connect(target['webSocketDebuggerUrl'], open_timeout=3, close_timeout=1) as connection:
-        connection.send(json.dumps({'id':1, 'method':'Runtime.evaluate', 'params':{'expression':SOURCE_INFO_JS, 'returnByValue':True}}))
+    values = evaluate_target(target, SOURCE_INFO_JS)
+    if not isinstance(values, list):
+        raise RuntimeError('TradingView chart metadata is not ready')
+    return {(v.get('symbol'), RESOLUTIONS.get(v.get('resolution'))) for v in values if v.get('symbol') in SYMBOLS and v.get('resolution') in RESOLUTIONS}
+
+
+def evaluate_target(target, expression):
+    with sync_connect(target['webSocketDebuggerUrl'], open_timeout=3, close_timeout=1, max_size=20 * 1024 * 1024) as connection:
+        connection.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': expression, 'returnByValue': True, 'awaitPromise': True}}))
         while True:
-            response = json.loads(connection.recv(timeout=4))
+            response = json.loads(connection.recv(timeout=15))
             if response.get('id') == 1:
-                values = response.get('result', {}).get('result', {}).get('value')
-                if not isinstance(values, list):
-                    raise RuntimeError('TradingView chart metadata is not ready')
-                return {(v.get('symbol'), RESOLUTIONS.get(v.get('resolution'))) for v in values if v.get('symbol') in SYMBOLS and v.get('resolution') in RESOLUTIONS}
+                result = response.get('result', {})
+                if response.get('error') or result.get('exceptionDetails'):
+                    raise RuntimeError(str(response.get('error') or result['exceptionDetails']))
+                return result.get('result', {}).get('value')
+
+
+TF_SECONDS = {'5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400, 'D': 86400}
+_last_htf_sync = {}
+
+
+def enqueue_native(timeframes, priority=False, quick=False):
+    timeframes = ['1h' if tf == '6h' else tf for tf in timeframes]
+    if native_warmup:
+        native_warmup.request(timeframes, priority, quick=quick)
+    else:
+        pending_native.extend(tf for tf in timeframes if tf in NATIVE_INTERVALS and tf not in pending_native)
+
+
+def enqueue_quick_sync(timeframes):
+    if not native_warmup or native_warmup.running or status.get('state') != 'connected':
+        return
+    tfs = ['1h' if tf == '6h' else tf for tf in timeframes]
+    tfs = [tf for tf in dict.fromkeys(tfs) if tf != '1m' and tf in NATIVE_INTERVALS]
+    if not tfs:
+        return
+    native_warmup.keep_one_minute = True
+    native_warmup.finished.difference_update(tfs)
+    native_warmup.request(tfs, priority=True, quick=True)
+
+
+async def boundary_sync_loop():
+    while True:
+        await asyncio.sleep(10)
+        if not startup_preloaded or not native_warmup or native_warmup.running or status.get('state') != 'connected':
+            continue
+        now = time.time()
+        mono = time.monotonic()
+        active_tfs = {tf for pairs in subscriptions.values() for _, tf in pairs if tf != '1m'}
+        due = []
+        for tf in sorted(active_tfs):
+            sec = TF_SECONDS.get(tf)
+            if not sec:
+                continue
+            bucket = int(now // sec)
+            if (now % sec) >= 3 and _last_htf_sync.get(tf, (bucket, 0))[0] != bucket and mono - _last_htf_sync.get(tf, (0, 0))[1] >= 30:
+                _last_htf_sync[tf] = (bucket, mono)
+                due.append(tf)
+        if due:
+            enqueue_quick_sync(due)
+
+
+def enqueue_startup():
+    global pending_startup, startup_preloaded
+    if native_warmup is None:
+        pending_startup = True
+        return
+    native_warmup.keep_one_minute = True
+    if not startup_preloaded:
+        with store.lock:
+            missing = [
+                tf for tf in NATIVE_INTERVALS
+                if tf != '1m' and any(len(store.data.get(tf, {}).get(sym, [])) < 2 for sym in ('NQ1!', 'ES1!', 'YM1!'))
+            ]
+        if missing:
+            native_warmup.request(missing)
+        native_warmup.finished.discard('1m')
+        native_warmup.request(['1m'], priority=True)
+    else:
+        native_warmup.request_startup(initial=False)
+    startup_preloaded = True
+
+
+async def native_warmup_loop():
+    global native_warmup, pending_startup
+    target = None
+
+    async def evaluate(expression, await_promise=False):
+        url = target.get('webSocketDebuggerUrl') if target else None
+        if active_cdp is not None and url and active_cdp_url == url:
+            try:
+                return await active_cdp.evaluate(expression, await_promise=await_promise, timeout=15)
+            except Exception:
+                pass
+        return await asyncio.to_thread(evaluate_target, target, expression)
+
+    async def read():
+        return await evaluate("String(window._exposed_chartWidgetCollection.activeChartWidget.value().model().mainSeries().interval())")
+
+    async def change(expected, resolution):
+        expression = '''(async () => {
+        const w=window._exposed_chartWidgetCollection.activeChartWidget.value();
+        const interval=()=>{const raw=String(w.model().mainSeries().interval());return raw==='1D'?'D':raw==='1W'?'W':raw==='M'?'1M':raw;};
+        if(interval()!==__EXPECTED__)return 'changed';
+        w.setResolution(__RESOLUTION__);
+        for(let n=0;n<80;n++){
+          const current=interval();
+          if(current===__RESOLUTION__)return 'ready';
+          if(current!==__EXPECTED__)return 'changed';
+          await new Promise(resolve=>setTimeout(resolve,40));
+        }
+        return 'timeout';})()'''
+        result = await evaluate(expression.replace('__EXPECTED__', json.dumps(expected)).replace('__RESOLUTION__', json.dumps(resolution)), await_promise=True)
+        if result == 'changed':
+            raise SourceChanged('Source interval changed by user')
+        if result != 'ready':
+            raise RuntimeError('TradingView chưa chuyển được sang khung ' + resolution)
+
+    async def snapshot():
+        return await evaluate(SNAPSHOT_JS.replace('__FULL__', 'true')) or []
+
+    async def history():
+        available = memory_available()
+        return await evaluate(HISTORY_JS.replace('__ALLOW__', 'true' if available is None or available > 2 * 1024**3 else 'false'))
+
+    def accept(entries):
+        for entry in entries:
+            symbol = entry.get('symbol')
+            tf = RESOLUTIONS.get(str(entry.get('resolution')))
+            if symbol not in SYMBOLS or not tf or tf == '6h':
+                continue
+            with store.lock:
+                store.metadata[symbol] = entry.get('metadata') or {}
+            changed = store.merge(symbol, tf, entry.get('bars', []), authoritative=True)
+            if changed:
+                publish({'type': 'history', 'symbol': symbol, 'timeframe': tf, 'bars': changed, 'metadata': store.metadata.get(symbol, {}), 'source': 'cache'})
+            if tf == '1h':
+                refresh_six_hour(symbol)
+
+    def report(value):
+        with state_lock:
+            status['native_loading'] = value
+            snap = copy.deepcopy(status)
+        publish(snap)
+
+    native_warmup = NativeWarmup(read, change, snapshot, history, accept, report)
+    if pending_native:
+        native_warmup.request(pending_native[:])
+        pending_native.clear()
+    if pending_startup:
+        pending_startup = False
+        enqueue_startup()
+    while True:
+        await native_warmup.wake.wait()
+        native_warmup.wake.clear()
+        try:
+            while native_warmup.queue:
+                with_targets = await asyncio.to_thread(lambda: json.load(urlopen(f'http://localhost:{CDP_PORT}/json/list', timeout=3)))
+                target = next((t for t in with_targets if t.get('id') == status.get('source_target') and is_chart_target(t)), None)
+                if not target:
+                    report({'state': 'waiting', 'message': 'Đang chờ tab TradingView nguồn sẵn sàng'})
+                    await asyncio.sleep(1.5)
+                    continue
+                try:
+                    await evaluate(ENSURE_PANES_JS, await_promise=True)
+                except RuntimeError as error:
+                    logging.warning('Native preload will use available panes: %s', error)
+                await native_warmup.cycle()
+                try:
+                    await asyncio.to_thread(store.save, None, None, True)
+                except OSError:
+                    logging.exception('Could not save native warmup snapshot')
+                refresh.set()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logging.exception('Native history preload')
+            report({'state': 'error', 'message': str(error)})
+            native_warmup.queue.clear()
+
 
 def remember_requests():
     global last_requests
     if subscriptions:
         last_requests = set().union(*subscriptions.values())
         try:
-            temporary = source_config.with_suffix('.tmp')
-            temporary.write_text(json.dumps(sorted(last_requests)), encoding='utf-8')
-            temporary.replace(source_config)
+            source_config.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.dumps(sorted(last_requests))
+            temporary = source_config.with_name(f'{source_config.name}.{threading.get_ident()}.tmp')
+            temporary.write_text(payload, encoding='utf-8')
+            for attempt in range(4):
+                try:
+                    temporary.replace(source_config)
+                    break
+                except PermissionError:
+                    if attempt == 3:
+                        raise
+                    time.sleep(0.03)
         except OSError:
             logging.exception('Could not persist source configuration')
-
 
 
 def validate_subscription(charts):
@@ -117,6 +366,7 @@ def source_marker(target):
 def memory_available():
     if os.name != 'nt':
         return None
+
     class Memory(ctypes.Structure):
         _fields_ = [('length', ctypes.c_ulong), ('load', ctypes.c_ulong)] + [(name, ctypes.c_ulonglong) for name in
             ('total', 'available', 'total_page', 'available_page', 'total_virtual', 'available_virtual', 'extended')]
@@ -128,18 +378,19 @@ def memory_available():
 HISTORY_JS = r'''(() => {
  const w=window._exposed_chartWidgetCollection?.activeChartWidget.value();
  if(!w)return null;
- const s=w.model().mainSeries(), bars=s.bars();
+ const model=w.model(), s=model.mainSeries(), bars=s.bars();
  if(!bars?.size())return null;
  const symbol=String(s.symbolInfo()?.name||'').split(':').pop(), resolution=String(s.interval());
  const key=symbol+':'+resolution, now=Date.now();
  const state=window.__terminalHistoryState ||= {};
  const p=state[key] ||= {count:0,growth:now,request:0};
  if(p.count!==bars.size()){p.count=bars.size();p.growth=now;}
- const loading=s.isLoading(), available=s.requestMoreDataAvailable();
- const stalled=!!p.request && now-p.growth>45000 && !loading;
+ const overlaysBusy=(model.dataSources?.()||[]).some(d=>d!==s&&d.metaInfo?.()?.id==='Overlay@tv-basicstudies'&&d.isLoading?.());
+ const loading=s.isLoading()||overlaysBusy, available=s.requestMoreDataAvailable();
+ const stalled=!!p.request && now-p.growth>8000 && !loading;
  const complete=!loading && (!available || stalled || !__ALLOW__);
- if(!complete && !loading && available && now-p.request>3000){s.requestMoreData(5000);p.request=now;}
- return {symbol,resolution,count:bars.size(),complete,loading:s.isLoading(),reason:!__ALLOW__?'memory':stalled?'stalled':!available?'source_limit':'loading'};
+ if(!complete && !s.isLoading() && available && now-p.request>800){s.requestMoreData(5000);p.request=now;}
+ return {symbol,resolution,count:bars.size(),complete,loading,reason:!__ALLOW__?'memory':stalled?'stalled':!available?'source_limit':'loading'};
 })()'''
 
 # Symbol metadata is authoritative; titles and sds_N indexes are not symbols.
@@ -148,33 +399,51 @@ SNAPSHOT_JS = r'''(() => {
   if (!collection) throw new Error('TradingView chart collection unavailable');
   const widgets = typeof collection.getAll === 'function' ? collection.getAll() : [collection.activeChartWidget.value()];
   const result = new Map();
-  for (const widget of widgets) for (const source of widget.model().dataSources()) {
-    try {
-      const info = source.symbolInfo?.();
-      const resolution = source.interval?.();
-      if (!info || !resolution) continue;
-      const symbol = String(info.name || info.ticker || '').split(':').pop();
-      if (!['NQ1!', 'ES1!', 'YM1!', 'CL1!'].includes(symbol)) continue;
-      const bars = source.data?.()?.bars?.() || source.bars?.();
-      if (!bars || !bars.size()) continue;
-      const output = [];
-      const append = value => {
-        if (value && value.length >= 5) output.push({time:value[0],open:value[1],high:value[2],low:value[3],close:value[4],volume:value[5] || 0});
-      };
-      if (__FULL__) bars.each((index,value) => { append(value); });
-      else append(bars.valueAt(bars.lastIndex()));
-      const entry = {symbol, resolution, bars:output, metadata:{
-        exchange:info.exchange || info.listed_exchange || '', description:info.description || symbol,
-        timezone:info.timezone, session:info.session,
-        sessionCorrections:info.corrections || info['session-correction'] || info.session_correction || '',
-        tickSize:info.minmov / info.pricescale, pointValue:info.pointvalue,
-        sessionRegular:(info.subsessions || []).filter(s => s.id === 'us_regular').map(s => ({session:s.session, corrections:s['session-correction'] || ''}))[0] || null,
-        holidays:info.session_holidays || ''
-      }};
-      const key = symbol + ':' + resolution, previous = result.get(key);
-      const last = output.at(-1)?.time ?? -1, priorLast = previous?.bars.at(-1)?.time ?? -1;
-      if (!previous || last > priorLast || last === priorLast && output.length > previous.bars.length) result.set(key, entry);
-    } catch (error) { result.set('error:' + result.size, {error:String(error)}); }
+  const minGaps = {'5':240,'15':600,'30':1200,'60':2400,'120':5400,'240':10800,'D':43200,'1D':43200,'W':259200,'1W':259200,'M':1728000,'1M':1728000,'3M':5184000};
+  for (const widget of widgets) {
+    const model = widget.model();
+    const main = model.mainSeries?.();
+    const mainRes = main?.interval?.();
+    for (const source of model.dataSources()) {
+      try {
+        const overlay = source.metaInfo?.()?.id === 'Overlay@tv-basicstudies';
+        if (source.isLoading?.() || overlay && (source._studyModified || typeof source.status === 'function' && source.status()?.type !== 2)) continue;
+        const info = source.symbolInfo?.() || (overlay ? source._symbolSourceSymbolInfo?.value?.() : null);
+        const resolution = source.interval?.();
+        if (!info || !resolution) continue;
+        if (overlay && mainRes && String(resolution) !== String(mainRes)) continue;
+        const symbol = String(info.name || info.ticker || '').split(':').pop();
+        if (!['NQ1!', 'ES1!', 'YM1!', 'CL1!'].includes(symbol)) continue;
+        if (overlay && String(source.symbol?.()).split(':').pop() !== symbol) continue;
+        const data = source.data?.();
+        const bars = data?.bars?.() || source.bars?.() || (overlay ? data : null);
+        if (!bars || !bars.size()) continue;
+        const output = [];
+        const append = value => {
+          if (value && value.length >= 5) output.push({time:value[0],open:value[1],high:value[2],low:value[3],close:value[4],volume:value[5] || 0});
+        };
+        if (__FULL__) bars.each((index,value) => { append(value); });
+        else { const li = bars.lastIndex(); for (let i = Math.max(0, li - 4); i <= li; i++) append(bars.valueAt(i)); }
+        const minGap = minGaps[String(resolution)] || 0;
+        if (overlay && minGap && bars.size() >= 2) {
+          const prev = typeof bars.valueAt === 'function' ? bars.valueAt(bars.lastIndex() - 1) : output.at(-2);
+          const prevTime = Array.isArray(prev) ? prev[0] : prev?.time;
+          const lastTime = output.at(-1)?.time;
+          if (Number.isFinite(prevTime) && Number.isFinite(lastTime) && lastTime - prevTime < minGap) continue;
+        }
+        const entry = {symbol, resolution, bars:output, metadata:{
+          exchange:info.exchange || info.listed_exchange || '', description:info.description || symbol,
+          timezone:info.timezone || '', session:info.session || '',
+          sessionCorrections:info.corrections || info['session-correction'] || info.session_correction || '',
+          tickSize:info.minmov / info.pricescale, pointValue:info.pointvalue,
+          sessionRegular:(info.subsessions || []).filter(s => s.id === 'us_regular').map(s => ({session:s.session, corrections:s['session-correction'] || ''}))[0] || null,
+          holidays:info.session_holidays || ''
+        }};
+        const key = symbol + ':' + resolution, previous = result.get(key);
+        const last = output.at(-1)?.time ?? -1, priorLast = previous?.bars.at(-1)?.time ?? -1;
+        if (!previous || last > priorLast || last === priorLast && output.length > previous.bars.length) result.set(key, entry);
+      } catch (error) { result.set('error:' + result.size, {error:String(error)}); }
+    }
   }
   return [...result.values()];
 })()'''
@@ -183,8 +452,7 @@ SNAPSHOT_JS = r'''(() => {
 def discover_target():
     with urlopen(f'http://localhost:{CDP_PORT}/json', timeout=3) as response:
         targets = json.load(response)
-    return next((t['webSocketDebuggerUrl'] for t in targets if t.get('type') == 'page'
-                 and 'tradingview.com/chart/' in t.get('url', '')), None)
+    return next((t['webSocketDebuggerUrl'] for t in targets if is_chart_target(t)), None)
 
 
 class CDPConnection:
@@ -208,15 +476,18 @@ class CDPConnection:
                 if not future.done():
                     future.set_exception(ConnectionError('CDP disconnected'))
 
-    async def evaluate(self, expression):
+    async def evaluate(self, expression, await_promise=False, timeout=6):
         self.sequence += 1
         request_id = self.sequence
         future = asyncio.get_running_loop().create_future()
         self.pending[request_id] = future
+        params = {'expression': expression, 'returnByValue': True}
+        if await_promise:
+            params['awaitPromise'] = True
         try:
             await self.socket.send(json.dumps({'id': request_id, 'method': 'Runtime.evaluate',
-                                              'params': {'expression': expression, 'returnByValue': True}}))
-            result = await asyncio.wait_for(future, timeout=6)
+                                              'params': params}))
+            result = await asyncio.wait_for(future, timeout=timeout)
             if result.get('exceptionDetails'):
                 raise RuntimeError(str(result['exceptionDetails']))
             return result.get('result', {}).get('value')
@@ -236,12 +507,30 @@ def publish(message):
             queue.put_nowait(None)
 
 
+def refresh_six_hour(symbol):
+    try:
+        with store.lock:
+            hourly = list(store.data['1h'].get(symbol, []))
+            meta = dict(store.metadata.get(symbol) or {})
+        values, skipped = aggregate_six_hour(hourly, meta)
+        changed = store.merge(symbol, '6h', values, authoritative=True)
+        with state_lock:
+            status.setdefault('derived_timeframes', {})['6h'] = {'from': '1h', 'alignment': 'source session', 'skipped_buckets': skipped}
+        if changed:
+            publish({'type': 'history', 'symbol': symbol, 'timeframe': '6h', 'bars': changed, 'metadata': meta, 'source': 'derived', 'derived_from': '1h'})
+    except (KeyError, ValueError, TypeError) as error:
+        logging.warning('6h from native 1h %s: %s', symbol, error)
+
+
 def set_status(state, message, **fields):
-    status.update(state=state, message=message, **fields)
-    publish(status)
+    with state_lock:
+        status.update(state=state, message=message, **fields)
+        snap = copy.deepcopy(status)
+    publish(snap)
 
 
 async def poll_source(source_url=None, expected=None):
+    global active_cdp, active_cdp_url
     delay = 1
     while True:
         reader = None
@@ -252,10 +541,16 @@ async def poll_source(source_url=None, expected=None):
             async with websockets.connect(target, max_size=20 * 1024 * 1024,
                                           open_timeout=5, close_timeout=2) as socket:
                 cdp = CDPConnection(socket)
+                active_cdp = cdp
+                active_cdp_url = target
                 reader = asyncio.create_task(cdp.read())
                 next_full = 0
                 delay = 1
+                empty_streak = 0
                 while True:
+                    if native_warmup and native_warmup.running:
+                        await asyncio.sleep(0.25)
+                        continue
                     full = refresh.is_set() or time.monotonic() >= next_full
                     refresh.clear()
                     values = await cdp.evaluate(SNAPSHOT_JS.replace('__FULL__', 'true' if full else 'false'))
@@ -266,9 +561,11 @@ async def poll_source(source_url=None, expected=None):
                         except RuntimeError:
                             progress = None
                         if progress:
-                            if progress.get('count') != history_progress.get(source_url, {}).get('count'):
+                            prev_count = history_progress.get(source_url, {}).get('count', 0)
+                            if abs((progress.get('count') or 0) - prev_count) > 5:
                                 next_full = 0
-                            history_progress[source_url] = progress
+                            with state_lock:
+                                history_progress[source_url] = progress
                     available = []
                     for entry in values or []:
                         if entry.get('error'):
@@ -276,30 +573,36 @@ async def poll_source(source_url=None, expected=None):
                             continue
                         symbol = entry.get('symbol')
                         tf = RESOLUTIONS.get(str(entry.get('resolution')))
-                        if symbol not in SYMBOLS or not tf:
+                        if symbol not in SYMBOLS or not tf or tf == '6h':
                             continue
                         if expected and (symbol, tf) != expected:
                             continue
                         last_bar = entry.get('bars', [])[-1] if entry.get('bars') else {}
-                        source_updates[symbol+':'+tf] = {'symbol':symbol,'timeframe':tf,'updated':time.time(),
-                            'last_bar_time':last_bar.get('time'),'close':last_bar.get('close'),'volume':last_bar.get('volume')}
+                        source_updates[symbol + ':' + tf] = {'symbol': symbol, 'timeframe': tf, 'updated': time.time(),
+                            'last_bar_time': last_bar.get('time'), 'close': last_bar.get('close'), 'volume': last_bar.get('volume')}
                         available.append({'symbol': symbol, 'timeframe': tf})
-                        store.metadata[symbol] = entry.get('metadata', {})
-                        changed = store.merge(symbol, tf, entry.get('bars', []))
+                        with store.lock:
+                            store.metadata[symbol] = entry.get('metadata') or {}
+                        changed = store.merge(symbol, tf, entry.get('bars', []), authoritative=full)
+                        if tf == '1h' and changed:
+                            refresh_six_hour(symbol)
                         if full and changed:
                             publish({'type': 'history', 'symbol': symbol, 'timeframe': tf,
-                                     'bars': changed, 'metadata': store.metadata[symbol], 'source': 'live'})
+                                     'bars': changed, 'metadata': store.metadata.get(symbol, {}), 'source': 'live'})
                         else:
                             for bar in changed:
                                 publish({'type': 'tick', 'symbol': symbol, 'timeframe': tf, 'bar': bar})
                     if not available:
+                        empty_streak += 1
+                        if empty_streak < 5:
+                            await asyncio.sleep(0.5)
+                            continue
                         raise RuntimeError('Chart chưa có nến NQ/ES/YM/CL với metadata hợp lệ')
-                    combined = [item for item in status.get('symbols', [])
-                                if (item['symbol'],item['timeframe']) not in {(item['symbol'],item['timeframe']) for item in available}]
-                    set_status('connected', 'TradingView · đang nhận dữ liệu', symbols=combined + available,
+                    empty_streak = 0
+                    set_status('connected', 'TradingView · đang nhận dữ liệu', symbols=available,
                                last_update=time.time(), sources=list(source_updates.values()))
                     if full:
-                        next_full = time.monotonic() + 20
+                        next_full = time.monotonic() + 180
                     try:
                         await asyncio.wait_for(refresh.wait(), timeout=1)
                     except asyncio.TimeoutError:
@@ -312,9 +615,12 @@ async def poll_source(source_url=None, expected=None):
                 key = ':'.join(expected)
                 source_updates[key] = {**source_updates.get(key, {}), 'symbol': expected[0], 'timeframe': expected[1], 'updated': 0, 'error': str(exc)}
                 set_status(status['state'], 'Một nguồn TradingView gián đoạn', sources=list(source_updates.values()))
-            if not source_url:
-                set_status('disconnected', str(exc), symbols=[])
+            if expected is None:
+                set_status('disconnected', str(exc) or 'TradingView không phản hồi', symbols=[])
         finally:
+            if active_cdp is not None and active_cdp_url == (source_url or active_cdp_url):
+                active_cdp = None
+                active_cdp_url = None
             if reader:
                 reader.cancel()
                 await asyncio.gather(reader, return_exceptions=True)
@@ -322,83 +628,221 @@ async def poll_source(source_url=None, expected=None):
         delay = min(delay * 2, 15)
 
 
-async def automatic_sources():
-    """Keep one stable native source for every requested symbol/timeframe."""
-    workers = {}
-    owned = {}
-    pending_creation = {}
-    reverse = {tf: resolution for resolution, tf in RESOLUTIONS.items()}
-    while True:
+def select_single_source(targets, previous_url=None):
+    """Choose one real chart, prefer a stable unmarked tab with NQ and peer panes."""
+    candidates = []
+    fallback_prev = None
+    for target in targets:
+        if not is_chart_target(target):
+            continue
         try:
-            wanted = requested_pairs()
-            may_create = bool(subscriptions)
-            def ensure():
-                with urlopen(f'http://localhost:{CDP_PORT}/json/list', timeout=3) as response:
-                    targets = json.load(response)
-                actual = {}
-                verified = []
-                unverified = set()
-                for target in targets:
-                    if not is_chart_target(target):
-                        continue
-                    url = target['webSocketDebuggerUrl']
-                    try:
-                        for pair in source_pairs(target):
-                            if pair not in actual or owned.get(':'.join(pair)) == url:
-                                actual[pair] = url
-                        verified.append(target)
-                    except Exception:
-                        unverified.add(url)
-                now = time.monotonic()
-                for key, (opened_at, previous_targets) in list(pending_creation.items()):
-                    new_tab = any(source_marker(target) == key and target.get('id') not in previous_targets
-                                  for target in targets)
-                    if not new_tab and now - opened_at >= 60:
-                        del pending_creation[key]
-                result = {}
-                for symbol, tf in sorted(wanted):
-                    key = symbol + ':' + tf
-                    url = actual.get((symbol, tf))
-                    if url:
-                        pending_creation.pop(key, None)
-                        result[key] = url
-                        continue
-                    if owned.get(key) in unverified:
-                        result[key] = owned[key]
-                        continue
-                    if not may_create or unverified or not verified or key in pending_creation:
-                        continue
-                    exchange = 'CBOT_MINI:' if symbol == 'YM1!' else 'NYMEX:' if symbol == 'CL1!' else 'CME_MINI:'
-                    url = 'https://www.tradingview.com/chart/?' + urlencode({'symbol': exchange+symbol, 'interval':reverse[tf], 'terminal_live':key})
-                    pending_creation[key] = (now, {target.get('id') for target in targets})
-                    try:
-                        with sync_connect(verified[0]['webSocketDebuggerUrl'], open_timeout=5, close_timeout=1) as connection:
-                            connection.send(json.dumps({'id':1,'method':'Runtime.evaluate','params':{'expression':'window.open('+json.dumps(url)+', "_blank")','userGesture':True}}))
-                            connection.recv(timeout=5)
-                    except Exception:
-                        logging.exception('Could not open TradingView chart %s', key)
-                return result
-            previous_owned = owned
-            owned = await asyncio.to_thread(ensure)
-            for key in set(workers)-set(owned) | {k for k in owned if k in previous_owned and owned[k] != previous_owned[k]}:
-                workers.pop(key).cancel()
-                source_updates.pop(key,None)
-            for key,target in owned.items():
-                if key not in workers or workers[key].done():
-                    symbol, tf = key.rsplit(':', 1)
-                    workers[key] = asyncio.create_task(poll_source(target, (symbol, tf)))
+            pairs = source_pairs(target)
         except Exception:
-            logging.exception('Live source subscription')
-        try:
-            await asyncio.sleep(3)
-        except asyncio.CancelledError:
-            for task in workers.values(): task.cancel()
-            await asyncio.gather(*workers.values(),return_exceptions=True)
-            raise
+            if target['webSocketDebuggerUrl'] == previous_url:
+                fallback_prev = target
+            continue
+        if not any(symbol in SYMBOLS for symbol, _ in pairs):
+            continue
+        has_index = any(symbol in ('NQ1!', 'ES1!', 'YM1!') for symbol, _ in pairs)
+        score = (has_index, target['webSocketDebuggerUrl'] == previous_url, source_marker(target) is None,
+                 len({symbol for symbol, _ in pairs}), any(symbol == 'NQ1!' for symbol, _ in pairs))
+        candidates.append((score, target, pairs))
+    if not candidates:
+        if fallback_prev is not None:
+            return fallback_prev, None
+        return None, set()
+    _, target, pairs = max(candidates, key=lambda item: item[0])
+    return target, pairs
+
+
+async def automatic_sources():
+    """One CDP reader for one TradingView tab with three native price sources."""
+    worker = None
+    current_url = None
+    retry_setup = 0
+    try:
+        while True:
+            if reconnect_source.is_set():
+                reconnect_source.clear()
+                if worker:
+                    worker.cancel()
+                    await asyncio.gather(worker, return_exceptions=True)
+                    worker = None
+                source_updates.clear()
+                with state_lock:
+                    history_progress.clear()
+                retry_setup = 0
+                set_status('connecting', 'Đang kết nối lại TradingView', symbols=[],
+                           sources=[], source_target=None, last_update=None, source_setup_error=None)
+            try:
+                def discover():
+                    with urlopen(f'http://localhost:{CDP_PORT}/json/list', timeout=3) as response:
+                        return json.load(response)
+                targets = await asyncio.to_thread(discover)
+                active_target = next((t for t in targets if t.get('webSocketDebuggerUrl') == current_url and is_chart_target(t)), None) if current_url else None
+                live_pairs = {(item['symbol'], item['timeframe']) for item in source_updates.values() if not item.get('error') and time.time() - (item.get('updated') or 0) < 15}
+                if active_target and worker and not worker.done() and {'NQ1!', 'ES1!', 'YM1!'} <= {s for s, _ in live_pairs}:
+                    target, pairs = active_target, live_pairs
+                elif native_warmup and native_warmup.running and active_target:
+                    target, pairs = active_target, None
+                else:
+                    target, pairs = await asyncio.to_thread(select_single_source, targets, current_url)
+                if target:
+                    url = target['webSocketDebuggerUrl']
+                    if url != current_url or worker is None or worker.done():
+                        if worker:
+                            worker.cancel()
+                            await asyncio.gather(worker, return_exceptions=True)
+                        source_updates.clear()
+                        with state_lock:
+                            history_progress.clear()
+                        current_url = url
+                        worker = asyncio.create_task(poll_source(url))
+                    if pairs is not None:
+                        native_symbols = {symbol for symbol, _ in pairs}
+                        missing = {'NQ1!', 'ES1!', 'YM1!'} - native_symbols
+                        can_setup = bool(native_symbols & {'NQ1!', 'ES1!', 'YM1!'}) and 'CL1!' not in native_symbols
+                        if subscriptions and missing and can_setup and time.monotonic() >= retry_setup:
+                            retry_setup = time.monotonic() + 20
+                            try:
+                                if active_cdp is not None and active_cdp_url == url:
+                                    await active_cdp.evaluate(ENSURE_PANES_JS, await_promise=True, timeout=15)
+                                else:
+                                    await asyncio.to_thread(evaluate_target, target, ENSURE_PANES_JS)
+                                refresh.set()
+                            except Exception as error:
+                                logging.warning('Native peer panes: %s', error)
+                                with state_lock:
+                                    status['source_setup_error'] = str(error)
+                        elif not missing:
+                            with state_lock:
+                                status.pop('source_setup_error', None)
+                        with state_lock:
+                            status.update(source_mode='single-tab-panes', source_target=target.get('id'),
+                                          native_timeframes=sorted({tf for _, tf in pairs}),
+                                          source_note='Native panes share the TradingView tab interval; other chart intervals use saved native history.')
+                        wanted = requested_pairs()
+                        for symbol, tf in wanted - pairs:
+                            source_updates[symbol + ':' + tf] = {'symbol': symbol, 'timeframe': tf, 'updated': 0,
+                                'error': 'Nguồn một tab đang dùng khung ' + ', '.join(sorted({t for _, t in pairs})) + '. Đổi khung trong tab TradingView để tải native; web giữ dữ liệu đã lưu.'}
+                        for key in list(source_updates):
+                            item = source_updates[key]
+                            pair = (item['symbol'], item['timeframe'])
+                            if (item.get('error') and pair in pairs) or pair not in (pairs | wanted):
+                                del source_updates[key]
+                elif not worker or worker.done():
+                    set_status('connecting', 'Mở một tab TradingView NQ/ES/YM để lấy dữ liệu ba pane')
+            except Exception as error:
+                logging.exception('Single-tab source discovery')
+                if not worker or worker.done():
+                    set_status('disconnected', f'Không kết nối được TradingView: {error}', symbols=[])
+            try:
+                await asyncio.wait_for(reconnect_source.wait(), timeout=3)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        if worker:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+
+
+def snapshot_market_data():
+    with store.lock:
+        return {tf: {symbol: list(bars) for symbol, bars in symbols.items()} for tf, symbols in store.data.items()}
+
+
+async def restart_tradingview_flow():
+    global startup_preloaded
+    if os.getenv('TERMINAL_OFFLINE') == '1':
+        return
+    try:
+        if native_warmup:
+            native_warmup.queue.clear()
+        source_updates.clear()
+        with state_lock:
+            history_progress.clear()
+        set_status('connecting', 'Đang tắt và mở lại TradingView Desktop…',
+                   symbols=[], sources=[], source_target=None, last_update=None,
+                   source_setup_error=None, native_loading=None)
+        reconnect_source.set()
+        if os.name == 'nt':
+            proc = await asyncio.to_thread(
+                subprocess.run,
+                ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'launch_tv.ps1'), '-ForceRestart'],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False
+            )
+            if proc.returncode != 0:
+                logging.warning('launch_tv.ps1 -ForceRestart exited %s: %s', proc.returncode, (proc.stdout or proc.stderr or '').strip())
+        set_status('connecting', 'Đang chờ biểu đồ TradingView sẵn sàng…', symbols=[], sources=[])
+        ready_target = None
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                targets = await asyncio.to_thread(lambda: json.load(urlopen(f'http://localhost:{CDP_PORT}/json/list', timeout=2)))
+                candidate, pairs = await asyncio.to_thread(select_single_source, targets)
+                if candidate and pairs:
+                    ready_target = candidate
+                    break
+            except Exception:
+                pass
+            await asyncio.sleep(0.8)
+        if ready_target:
+            try:
+                await asyncio.to_thread(evaluate_target, ready_target, ENSURE_PANES_JS)
+            except Exception as exc:
+                logging.warning('ENSURE_PANES_JS after restart: %s', exc)
+        startup_preloaded = False
+        reconnect_source.set()
+        refresh.set()
+        enqueue_startup()
+    except Exception as exc:
+        logging.exception('Restart TradingView failed')
+        set_status('disconnected', f'Không thể khởi động lại TradingView: {exc}', symbols=[])
+
+
+def trigger_restart_tradingview():
+    global restart_tv_task
+    if os.getenv('TERMINAL_OFFLINE') == '1':
+        return False
+    loop = main_loop
+    if loop is None or loop.is_closed():
+        return False
+
+    def _spawn():
+        global restart_tv_task
+        if restart_tv_task is None or restart_tv_task.done():
+            restart_tv_task = asyncio.create_task(restart_tradingview_flow())
+
+    loop.call_soon_threadsafe(_spawn)
+    return True
+
+
+def snapshot_metadata():
+    with store.lock:
+        return {symbol: copy.deepcopy(meta) for symbol, meta in store.metadata.items()}
+
+
+SNAPSHOT_TF_ORDER = ('1m', '5m', '15m', '1h', '4h', '6h', 'D', 'W', '30m', '2h', '1M', '3M', '12h')
+
+
+def encode_initial_snapshot(status_snapshot, data_snapshot, metadata_snapshot):
+    frames = [json.dumps(status_snapshot)]
+    ordered_tfs = [tf for tf in SNAPSHOT_TF_ORDER if tf in data_snapshot] + [tf for tf in data_snapshot if tf not in SNAPSHOT_TF_ORDER]
+    for tf in ordered_tfs:
+        symbols = data_snapshot.get(tf) or {}
+        for symbol, bars in symbols.items():
+            if bars:
+                frames.append(json.dumps({'type': 'history', 'symbol': symbol, 'timeframe': tf,
+                                          'bars': bars, 'metadata': metadata_snapshot.get(symbol), 'source': 'cache'}))
+    return frames
 
 
 async def frontend_ws_handler(socket):
-    queue = asyncio.Queue(maxsize=64)
+    queue = asyncio.Queue(maxsize=256)
 
     async def send_loop():
         try:
@@ -408,39 +852,102 @@ async def frontend_ws_handler(socket):
                     await socket.close(code=1013, reason='Client too slow; reconnect for snapshot')
                     return
                 await asyncio.wait_for(socket.send(message), timeout=5)
-        except websockets.exceptions.ConnectionClosedOK:
+        except websockets.exceptions.ConnectionClosed:
             return
         except Exception as exc:
             logging.warning('Frontend send failed: %s', exc)
-            await socket.close(code=1011, reason='Send failed; reconnect for snapshot')
+            try:
+                await socket.close(code=1011, reason='Send failed; reconnect for snapshot')
+            except Exception:
+                pass
 
     sender = None
     try:
-        queue.put_nowait(json.dumps(status))
-        for tf, symbols in store.data.items():
-            for symbol, bars in symbols.items():
-                if bars:
-                    queue.put_nowait(json.dumps({'type': 'history', 'symbol': symbol, 'timeframe': tf,
-                                                'bars': bars, 'metadata': store.metadata.get(symbol), 'source': 'cache'}))
+        with state_lock:
+            status_snap = copy.deepcopy(status)
+        frames = await asyncio.to_thread(encode_initial_snapshot, status_snap, snapshot_market_data(), snapshot_metadata())
+        for frame in frames:
+            queue.put_nowait(frame)
         clients.add(queue)
         sender = asyncio.create_task(send_loop())
-        async for raw in socket:
-            try:
-                request = json.loads(raw)
-                if not isinstance(request, dict):
-                    raise ValueError('Expected an object')
-                if request.get('action') == 'subscribe':
-                    subscriptions[id(socket)] = validate_subscription(request.get('charts', []))
-                    remember_requests()
-                elif request.get('action') in ('refresh', 'refresh_htf'):
-                    refresh.set()
-                elif request.get('action') == 'ping':
-                    queue.put_nowait(json.dumps({'type': 'pong', 'time': time.time()}))
-            except (ValueError, TypeError, asyncio.QueueFull):
-                await socket.close(code=1008, reason='Invalid request')
-                break
+        try:
+            async for raw in socket:
+                try:
+                    request = json.loads(raw)
+                    if not isinstance(request, dict):
+                        raise ValueError('Expected an object')
+                    if request.get('action') == 'subscribe':
+                        subscriptions[id(socket)] = validate_subscription(request.get('charts', []))
+                        remember_requests()
+                        if startup_preloaded:
+                            now = time.time()
+                            mono = time.monotonic()
+                            due = []
+                            for _, tf in subscriptions[id(socket)]:
+                                if tf == '1m':
+                                    continue
+                                mapped = '1h' if tf == '6h' else tf
+                                sec = TF_SECONDS.get(mapped)
+                                if sec and mono - _last_htf_sync.get(mapped, (0, 0))[1] >= 45:
+                                    _last_htf_sync[mapped] = (int(now // sec), mono)
+                                    due.append(mapped)
+                            if due:
+                                enqueue_quick_sync(due)
+                    elif request.get('action') == 'preload_native':
+                        enqueue_native(list(NATIVE_INTERVALS))
+                    elif request.get('action') == 'startup_native':
+                        enqueue_startup()
+                    elif request.get('action') == 'request_native':
+                        requested = request.get('charts', [])
+                        if not isinstance(requested, list) or len(requested) > 16:
+                            queue.put_nowait(json.dumps({'type': 'native_request_error', 'error': 'Invalid native request list'}))
+                            continue
+                        valid_tfs, rejected = [], []
+                        for item in requested:
+                            if not isinstance(item, dict):
+                                rejected.append(str(item))
+                                continue
+                            sym, tf = item.get('symbol'), item.get('timeframe')
+                            if sym in SYMBOLS and (tf in NATIVE_INTERVALS or tf == '6h'):
+                                valid_tfs.append(tf)
+                            else:
+                                rejected.append(f'{sym}:{tf}')
+                        if valid_tfs:
+                            with store.lock:
+                                already_cached = all(
+                                    all(len(store.data.get('1h' if tf == '6h' else tf, {}).get(sym, [])) >= 20 for sym in ('NQ1!', 'ES1!', 'YM1!'))
+                                    for tf in valid_tfs
+                                )
+                            enqueue_native(valid_tfs, priority=True, quick=already_cached)
+                        if rejected:
+                            queue.put_nowait(json.dumps({'type': 'native_request_error', 'rejected': rejected,
+                                                         'error': f'Khung/mã chưa hỗ trợ native: {", ".join(rejected)}'}))
+                    elif request.get('action') == 'refresh':
+                        if os.getenv('TERMINAL_OFFLINE') == '1':
+                            with state_lock:
+                                queue.put_nowait(json.dumps(status))
+                        else:
+                            reconnect_source.set()
+                    elif request.get('action') == 'restart_tv':
+                        if os.getenv('TERMINAL_OFFLINE') == '1':
+                            with state_lock:
+                                queue.put_nowait(json.dumps(status))
+                        else:
+                            trigger_restart_tradingview()
+                    elif request.get('action') == 'refresh_htf':
+                        refresh.set()
+                    elif request.get('action') == 'ping':
+                        queue.put_nowait(json.dumps({'type': 'pong', 'time': time.time()}))
+                except asyncio.QueueFull:
+                    await socket.close(code=1013, reason='Client too slow; reconnect for snapshot')
+                    break
+                except (ValueError, TypeError):
+                    await socket.close(code=1008, reason='Invalid request')
+                    break
+        except websockets.exceptions.ConnectionClosed:
+            pass
     finally:
-        subscriptions.pop(id(socket),None)
+        subscriptions.pop(id(socket), None)
         if subscriptions:
             remember_requests()
         clients.discard(queue)
@@ -450,18 +957,54 @@ async def frontend_ws_handler(socket):
 
 
 class HTTPHandler(SimpleHTTPRequestHandler):
+    def _valid_host(self):
+        host = (self.headers.get('Host') or '').split(':', 1)[0].lower()
+        return host in ('127.0.0.1', 'localhost', '[::1]', '')
+
+    def _valid_origin(self):
+        origin = (self.headers.get('Origin') or '').strip()
+        if not origin:
+            return True
+        parsed = urlsplit(origin)
+        return parsed.scheme in ('http', 'https') and (parsed.hostname or '').lower() in ('127.0.0.1', 'localhost', '::1')
+
+    def do_POST(self):
+        if not self._valid_host() or not self._valid_origin():
+            self.send_error(403, 'Forbidden host/origin')
+            return
+        path = urlsplit(self.path)
+        if path.path == '/api/restart-tv':
+            started = trigger_restart_tradingview()
+            body = json.dumps({'ok': True, 'restarting': started}).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_error(404, 'Not found')
+
     def do_GET(self):
+        if not self._valid_host():
+            self.send_error(403, 'Forbidden host')
+            return
         path = urlsplit(self.path)
         if path.path in ('/api/calendar', '/api/music/metadata', '/api/music/resolve'):
+            retry_after = None
             try:
                 if path.path == '/api/calendar':
                     result = calendar_service.get()
                 else:
-                    url = parse_qs(path.query).get('url', [''])[0]
+                    params = parse_qs(path.query)
+                    url = params.get('url', [''])[0]
                     if len(url) > 2048:
                         raise ValueError('Link too long')
-                    result = {'url': resolve_music_share(url)} if path.path.endswith('/resolve') else music_metadata(url)
+                    result = ({'url': resolve_music_share(url)} if path.path.endswith('/resolve')
+                              else music_metadata(url, fresh_embed=params.get('embed') == ['1']))
                 code = 200
+            except MusicProviderError as exc:
+                result, code = {'error': str(exc)}, exc.status
+                retry_after = exc.retry_after
             except ValueError as exc:
                 result, code = {'error': str(exc)}, 400
             except Exception:
@@ -470,15 +1013,20 @@ class HTTPHandler(SimpleHTTPRequestHandler):
             self.send_response(code)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
+            if retry_after:
+                self.send_header('Retry-After', str(retry_after))
             self.end_headers()
             self.wfile.write(body)
-        elif self.path == '/health':
-
-            counts = {symbol: len(bars) for symbol, bars in dict(store.data['1m']).items()}
-            body = json.dumps({**status, 'ws_port': WS_PORT, 'cached_1m': counts,
-                'blocked_timeframes': {'6h':'TradingView Basic: custom intervals require upgraded plan','12h':'Requires custom interval entitlement'}, 'cache': {'mode':'ram', 'disk_backup':True, 'free_bytes':memory_available()},
-                'history_loading':list(history_progress.values()),
-                'coverage': {tf: {symbol: len(bars) for symbol, bars in values.items()} for tf, values in store.data.items()}}).encode()
+        elif path.path == '/health':
+            with store.lock:
+                counts = {symbol: len(bars) for symbol, bars in store.data.get('1m', {}).items()}
+                coverage = {tf: {symbol: len(bars) for symbol, bars in values.items()} for tf, values in store.data.items()}
+            with state_lock:
+                status_copy = copy.deepcopy(status)
+                hist_loading = list(history_progress.values())
+            body = json.dumps({**status_copy, 'ws_port': WS_PORT, 'cached_1m': counts,
+                'blocked_timeframes': {'12h': 'Requires custom interval entitlement'}, 'cache': {'mode': 'ram', 'disk_backup': True, 'free_bytes': memory_available()},
+                'history_loading': hist_loading, 'coverage': coverage}).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
@@ -488,7 +1036,7 @@ class HTTPHandler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def end_headers(self):
-        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Cache-Control', 'no-store, must-revalidate')
         super().end_headers()
 
     def log_message(self, *_args):
@@ -499,42 +1047,65 @@ async def save_loop():
     while True:
         await asyncio.sleep(20)
         try:
-            await asyncio.to_thread(store.save, copy.deepcopy(store.data), copy.deepcopy(store.metadata))
+            await asyncio.to_thread(store.save, None, None, True)
         except OSError:
             logging.exception('Could not persist market data')
 
 
 async def main():
+    global main_loop
+    main_loop = asyncio.get_running_loop()
     store.load()
+    for symbol in SYMBOLS:
+        if store.data['1h'].get(symbol):
+            refresh_six_hour(symbol)
     handler = partial(HTTPHandler, directory=str(ROOT.parent / 'frontend'))
-    server = ThreadingHTTPServer(('127.0.0.1', HTTP_PORT), handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    server = None
     tasks = []
+    allowed_origins = [f'http://localhost:{HTTP_PORT}', f'http://127.0.0.1:{HTTP_PORT}']
     try:
         async with websockets.serve(frontend_ws_handler, '127.0.0.1', WS_PORT,
                                     max_size=8192, ping_interval=20, ping_timeout=15, close_timeout=2,
-                                    origins=[None, f'http://localhost:{HTTP_PORT}', f'http://127.0.0.1:{HTTP_PORT}']):
+                                    origins=allowed_origins):
+            server = ThreadingHTTPServer(('127.0.0.1', HTTP_PORT), handler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
             logging.info('Terminal http://localhost:%s · WebSocket %s', HTTP_PORT, WS_PORT)
             tasks.append(asyncio.create_task(save_loop()))
             if os.getenv('TERMINAL_OFFLINE') == '1':
                 set_status('disconnected', 'Offline · dữ liệu đã lưu')
             else:
                 if os.name == 'nt':
-                    await asyncio.to_thread(subprocess.run, ['powershell', '-NoProfile',
-                        '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'launch_tv.ps1')],
-                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=30, check=False)
+                    try:
+                        await asyncio.to_thread(subprocess.run, ['powershell', '-NoProfile',
+                            '-ExecutionPolicy', 'Bypass', '-File', str(ROOT / 'launch_tv.ps1')],
+                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=30, check=False)
+                    except (OSError, subprocess.TimeoutExpired) as exc:
+                        logging.warning('launch_tv.ps1 warning: %s', exc)
                 tasks.append(asyncio.create_task(automatic_sources()))
+                tasks.append(asyncio.create_task(native_warmup_loop()))
+                tasks.append(asyncio.create_task(boundary_sync_loop()))
             await asyncio.Event().wait()
     finally:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.to_thread(server.shutdown)
-        server.server_close()
-        store.save()
+        if server:
+            await asyncio.to_thread(server.shutdown)
+            server.server_close()
+        try:
+            store.save()
+        except OSError:
+            logging.exception('Could not save market data during shutdown')
 
 
 if __name__ == '__main__':
+    import sys
+    if hasattr(sys.stdout, 'reconfigure'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
     logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
     try:
         asyncio.run(main())

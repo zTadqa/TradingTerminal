@@ -1,0 +1,45 @@
+@import url('https://fonts.googleapis.com/css2?family=Chivo+Mono:wght@400;600&family=Manrope:wght@500;700&display=swap');
+#topbar #dock-market-status .dock-clock{--ink:var(--bg);--ink2:var(--glass);--a:var(--ok,var(--accent));--m-phase:var(--trade-sell-bg,var(--accent));--d:color-mix(in srgb,var(--accent) 65%,var(--text));--x:var(--accent);--ph:var(--a);--font-ui:Manrope,Arial,sans-serif;--font-num:'Chivo Mono',monospace}
+#topbar #dock-market-status .dock-clock{position:relative !important;display:inline-flex !important;align-items:center !important;gap:13px !important;padding:8px 22px 8px 8px !important;border-radius:999px !important;isolation:isolate !important;border:1px solid var(--line) !important;
+ background:linear-gradient(180deg,var(--ink2),var(--ink)) !important;
+ box-shadow:0 12px 32px rgba(0,0,0,.5) !important;transition:transform .2s !important;}#topbar #dock-market-status .dock-clock:hover{transform:translateY(-1px) !important;}#topbar #dock-market-status #clock-settings-trigger{position:absolute !important;inset:-1px !important;width:calc(100% + 2px) !important;height:calc(100% + 2px) !important;padding:0 !important;border:0 !important;border-radius:inherit !important;background:transparent !important;cursor:pointer !important;z-index:1 !important;}#topbar #dock-market-status #clock-settings-trigger:focus-visible{outline:2px solid var(--ph) !important;outline-offset:3px !important;}#topbar #dock-market-status .dock-face{width:44px !important;height:44px !important;flex:none !important;overflow:visible !important;color:var(--text) !important;}#topbar #dock-market-status .dock-face .rail{fill:none !important;stroke-width:3 !important;opacity:.18 !important;}#topbar #dock-market-status .dock-face .fill{fill:none !important;stroke-width:3 !important;stroke-linecap:butt !important;}#topbar #dock-market-status .dock-face .face{fill:var(--bg) !important;stroke:var(--line) !important;stroke-width:1 !important;}#topbar #dock-market-status .dock-face .ticks{stroke:var(--muted) !important;stroke-width:1.1 !important;opacity:.7 !important;stroke-linecap:round !important;}#topbar #dock-market-status .dock-face .hand{transform-box:view-box !important;transform-origin:22px 22px !important;stroke-linecap:round !important;}#topbar #dock-market-status .dock-face .hand.h{transform:rotate(var(--h)) !important;stroke:var(--text) !important;stroke-width:2 !important;}#topbar #dock-market-status .dock-face .hand.m{transform:rotate(var(--m)) !important;stroke:var(--text) !important;stroke-width:1.4 !important;}#topbar #dock-market-status .dock-face .hand.s{transform:rotate(var(--s)) !important;stroke:var(--ph) !important;stroke-width:1 !important;}#topbar #dock-market-status .dock-face .pin{fill:var(--ph) !important;stroke:none !important;}#topbar #dock-market-status .dock-text{display:flex !important;flex-direction:column !important;gap:5px !important;}#topbar #dock-market-status #live-clock{font:600 18px/1 var(--font-num) !important;letter-spacing:-.02em !important;font-variant-numeric:tabular-nums !important;white-space:nowrap !important;}#topbar #dock-market-status .dock-sec{font-weight:400 !important;color:var(--muted) !important;font-size:13px !important;}#topbar #dock-market-status .dock-phases{display:flex !important;gap:10px !important;font:700 10px/1 var(--font-ui) !important;letter-spacing:.08em !important;}#topbar #dock-market-status .dock-phases i{font-style:normal !important;color:var(--muted) !important;opacity:.45 !important;position:relative !important;padding-bottom:4px !important;transition:color .4s,opacity .4s !important;}#topbar #dock-market-status .dock-phases i::after{content:"" !important;position:absolute !important;left:0 !important;bottom:0 !important;height:2px !important;width:calc(var(--p,0)*100%) !important;background:currentColor !important;border-radius:2px !important;}#topbar #dock-market-status .dock-phases i.on{opacity:1 !important;color:var(--c) !important;}#topbar #dock-market-status .dock-phases i.done{opacity:.85 !important;color:var(--c) !important;}#topbar #dock-market-status .dock-phases i.done::after{width:100% !important;opacity:.5 !important;}
+
+
+#topbar #dock-market-status .dock-clock{gap:8px!important;padding:3px 12px 3px 4px!important;margin-left:10px!important;border-left:1px solid var(--line)!important;box-sizing:border-box;height:36px!important;box-shadow:0 2px 8px #0003!important}
+#topbar #dock-market-status .dock-face{width:28px!important;height:28px!important;filter:none!important;transform:none!important}
+#topbar #dock-market-status .dock-text{gap:3px!important}
+html body #topbar #dock-market-status .dock-clock #live-clock{font:600 12px/1 var(--font-num)!important;letter-spacing:-.02em!important;color:var(--text)!important;text-shadow:none!important}
+html body #topbar #dock-market-status .dock-clock .dock-sec{font:400 10px/1 var(--font-num)!important;color:var(--muted)!important;animation:none!important;opacity:1!important}
+#topbar #dock-market-status .dock-phases{font-size:7px!important;gap:8px!important}
+#topbar #dock-market-status .dock-phases i{padding-bottom:3px!important}
+#topbar #dock-market-status #live-tz[hidden]{display:none!important}
+#topbar #dock-market-status .dock-face .hand,#topbar #dock-market-status .dock-face .face{animation:none!important;transition:none!important}
+body.reduce-motion #topbar #dock-market-status .dock-clock,body.reduce-motion #topbar #dock-market-status .dock-phases i{transition:none!important}
+
+/* The clock frame meets the outside pill; artwork and type retain their sizes. */
+#topbar #dock-market-status:not(:has(#connection-status[data-state="loading"])){height:40px;min-height:40px;padding-right:0!important}
+#topbar #dock-market-status .dock-clock{height:40px!important;align-self:center;margin-block:-1px!important;margin-right:-1px!important;box-shadow:none!important;transform:none!important;background:var(--glass)!important;border-color:var(--line)!important}
+#topbar #dock-market-status .dock-clock:hover{transform:none!important}
+/* Compact connection indicator and a slightly larger, wider clock. */
+#topbar #connection-status[data-state="connected"] #connection-status-text{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip-path:inset(50%)!important;white-space:nowrap!important}
+#topbar #connection-status[data-state="connected"]{gap:0!important;min-width:14px}
+#topbar #dock-market-status .dock-clock{min-width:142px!important;gap:10px!important;padding:3px 16px 3px 7px!important}
+#topbar #dock-market-status .dock-face{width:32px!important;height:32px!important}
+html body #topbar #dock-market-status .dock-clock #live-clock{font-size:14px!important}
+html body #topbar #dock-market-status .dock-clock .dock-sec{font-size:11px!important}
+#topbar #dock-market-status .dock-phases{font-size:8px!important;gap:10px!important}
+
+/* Borderless clock shell; keep the established size and ring artwork. */
+#topbar #dock-market-status .dock-clock{border-color:transparent!important;box-shadow:none!important}
+#topbar #dock-market-status #clock-settings-trigger{inset:0!important;width:100%!important;height:100%!important}
+#topbar #dock-market-status #clock-settings-trigger:focus-visible{outline:0!important;box-shadow:inset 0 0 0 2px var(--muted)!important}
+/* Breathing is visual only. The reload target stays fixed and the glow is unclipped. */
+#topbar .topbar-right #connection-status{overflow:visible!important;background:transparent!important;border:0!important;box-shadow:none!important;isolation:isolate}
+#topbar .topbar-right #connection-status[data-state=connected]{width:28px!important;min-width:28px!important;height:28px!important;flex:0 0 28px!important;border-radius:50%!important}
+#topbar #connection-status .dock-load-ring{overflow:visible!important;pointer-events:none!important;transform-origin:center}
+#topbar #connection-status #reload-chart-data{width:100%!important;height:100%!important;inset:0!important;border-radius:50%!important;background:transparent!important;box-shadow:none!important;transform:none!important}
+#topbar #connection-status #reload-chart-data:focus-visible{outline:2px solid var(--accent)!important;outline-offset:2px!important}
+/* Clock typography follows Toolbar text size while the dial keeps its own size. */
+html body #topbar #dock-market-status .dock-clock #live-clock{font-size:calc(14px * var(--toolbar-text-scale,1))!important}
+html body #topbar #dock-market-status .dock-clock .dock-sec{font-size:calc(11px * var(--toolbar-text-scale,1))!important}
+html body #topbar #dock-market-status .dock-clock .dock-phases{font-size:calc(8px * var(--toolbar-text-scale,1))!important}

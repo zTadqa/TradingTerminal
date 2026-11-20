@@ -1,0 +1,112 @@
+/* Visual samples are overlays; native selects remain focusable value owners. */
+.settings-visual-control{position:relative;display:inline-flex;flex:none;width:142px;min-height:34px;max-width:100%;vertical-align:middle}
+.settings-visual-control select{width:100%!important;max-width:none!important;min-width:0!important;color:transparent!important;text-shadow:none!important;background-image:none!important;caret-color:transparent}
+.settings-visual-control select option{color:var(--text)}
+.settings-selected-preview{position:absolute;inset:0 18px 0 8px;display:flex;align-items:center;justify-content:center;gap:8px;pointer-events:none;overflow:hidden;color:var(--text)}
+.settings-selected-preview svg{width:85px;max-width:100%;height:30px;flex:none;display:block}
+.settings-visual-control:has(select[data-input-key=cycPos]),.settings-visual-control:has(select[data-setting=watermarkPosition]){height:48px}
+.settings-visual-control:has(select[data-input-key=cycPos]) svg,.settings-visual-control:has(select[data-setting=watermarkPosition]) svg{height:42px}
+.settings-option-visual{display:flex!important;align-items:center;justify-content:center;gap:10px;min-height:32px;width:100%;white-space:nowrap}
+.settings-option-visual svg{height:34px;width:100px;flex:none}
+.settings-option-visual svg[height="46"]{height:48px}
+.visual-caption{font-size:11px;line-height:1.2;opacity:.65;white-space:nowrap}
+.visual-size,.visual-marker{display:inline-block;min-width:28px;line-height:1;font-weight:500}
+.visual-asset{display:grid;grid-template-columns:26px 65px;align-items:center;gap:10px;text-align:left}
+.visual-asset img{width:24px;height:24px;object-fit:contain}
+.visual-asset img{border-radius:50%}
+.settings-visual-control:has(select.chart-line-style){width:78px;min-width:78px}
+#settings-select-menu .settings-asset-label{display:grid!important;grid-template-columns:28px 74px;justify-content:center;gap:10px;text-align:left!important}
+#settings-select-menu .settings-asset-label>span{text-align:left}
+#settings-select-menu button[role=option]{min-height:42px}
+.settings-number-field{box-sizing:border-box;position:relative;display:grid;grid-template-columns:26px minmax(28px,1fr) 26px;gap:3px;align-items:center;width:108px;height:36px;padding:3px;border-radius:12px;flex:none;background:color-mix(in srgb,var(--text) 4%,var(--bg));overflow:hidden}
+.settings-number-field input[type=number]{width:100%!important;max-width:none!important;min-width:0!important;height:30px!important;padding:0!important;margin:0!important;border:0!important;outline:0!important;background:transparent!important;box-shadow:none!important;text-align:center;font:600 13px/30px var(--font-ui);color:var(--text);appearance:textfield;-moz-appearance:textfield}
+.settings-number-field input::-webkit-inner-spin-button,.settings-number-field input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+:is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.qt-number-field,.settings-number-field){border:0!important;outline:none!important;box-shadow:none!important}
+:is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.qt-number-step,.settings-number-step){display:grid;place-items:center;box-sizing:border-box;width:26px;height:30px;padding:0;margin:0;border:0!important;border-radius:8px!important;background:transparent!important;color:var(--muted);outline:none;box-shadow:none!important;cursor:pointer}
+:is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.qt-number-step,.settings-number-step).pointer-hot:not(:disabled){background:color-mix(in srgb,var(--accent) 14%,transparent)!important;color:var(--accent)}
+:is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.qt-number-step,.settings-number-step):focus-visible{outline:1px solid var(--accent);outline-offset:-2px}
+.settings-number-step:disabled{opacity:.28;cursor:default}
+.settings-number-step svg{width:14px;height:14px;pointer-events:none}
+.has-width-preview input[type=number]{padding-bottom:6px!important}
+.number-width-preview{position:absolute;left:calc(50% - 12px);bottom:2px;width:24px;height:10px;pointer-events:none;color:var(--text);opacity:.7}
+.number-width-preview svg{width:24px;height:10px;display:block}
+:is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) input[type=range]{cursor:pointer;transition:filter .14s ease,box-shadow .14s ease;border-radius:12px}
+:is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) input[type=range]:hover{filter:brightness(1.15);box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 14%,transparent)}
+.chart-sound-preview{display:inline-flex!important;align-items:center;justify-content:center;gap:7px;border:0!important;border-radius:10px!important;padding:8px 12px!important;background:color-mix(in srgb,var(--accent) 10%,var(--bg))!important;color:var(--accent)!important;min-height:34px;white-space:nowrap}
+.chart-sound-preview svg{width:18px;height:16px;display:block}
+.chart-sound-preview.is-playing{background:color-mix(in srgb,var(--accent) 20%,var(--bg))!important}
+#replay-toolbar select{border-radius:12px!important;appearance:none;-webkit-appearance:none;padding:0 14px!important;min-width:62px;text-align:center;border:1px solid color-mix(in srgb,var(--accent) 35%,transparent)!important}
+#settings-select-menu[aria-label="Replay speed"]{border-radius:14px;padding:5px;min-width:110px}
+#settings-select-menu[aria-label="Replay speed"] button{border-radius:9px;min-height:36px}
+@media(prefers-reduced-motion:reduce){input[type=range],.chart-sound-preview{transition:none!important}}
+
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) .settings-visual-control select[data-visual-ready]{color:transparent!important;text-shadow:none!important;background-image:none!important;-webkit-text-fill-color:transparent!important}
+/* Keep samples behind the open menu from showing through during its entrance. */
+html body #settings-select-menu{background:var(--bg)!important;opacity:1!important;animation:none!important;transition:transform .12s ease!important}
+
+/* Fixed sample columns: changing font size never shifts the Aa origin. */
+#settings-select-menu .settings-option-visual:is([data-visual-kind=size],[data-visual-kind=markerSize]){display:grid!important;grid-template-columns:48px 70px;gap:14px;justify-content:center;text-align:left}
+#settings-select-menu .settings-option-visual .visual-size,#settings-select-menu .settings-option-visual .visual-marker{width:48px;min-width:48px;text-align:left}
+.settings-selected-preview:has(.visual-size),.settings-selected-preview:has(.visual-marker){display:grid;grid-template-columns:34px 54px;gap:6px;justify-content:center;text-align:left}
+
+/* Preview and native frame use the same height; no screen hangs below its field. */
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-dialog{width:min(540px,calc(100vw - 24px))}
+.settings-visual-control[data-visual-kind=position]{width:164px;height:56px;min-height:56px;align-self:center;box-sizing:border-box}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) .settings-visual-control[data-visual-kind=position]{height:56px;min-height:56px}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) .settings-visual-control[data-visual-kind=position] select{height:56px!important;min-height:56px!important;box-sizing:border-box;line-height:normal}
+.settings-visual-control[data-visual-kind=position] .settings-selected-preview{inset:5px 16px 5px 8px}
+.settings-visual-control[data-visual-kind=position] .settings-selected-preview svg{height:42px;width:96px;max-height:100%;max-width:100%}
+:is(#settings-modal,#qt-settings-modal) .chart-setting-row:has(.settings-visual-control[data-visual-kind=position]){min-height:72px;align-items:center;gap:14px}
+.settings-visual-control[data-visual-kind=labelPosition] .settings-selected-preview svg{height:32px;width:104px}
+
+/* A label's browser-forwarded :hover must never paint its row or first button. */
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.chart-setting-row,.setting-row,.qt-row):hover{background:transparent!important;box-shadow:none!important}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.chart-setting-row,.setting-row,.qt-row)::before{opacity:0!important;background:transparent!important}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.qt-number-field,.settings-number-field):hover{background:color-mix(in srgb,var(--text) 4%,var(--bg))!important;box-shadow:none!important}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.qt-number-step,.settings-number-step):not(.pointer-hot){background:transparent!important;color:var(--muted)!important;box-shadow:none!important}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.qt-number-step,.settings-number-step).pointer-hot:not(:disabled){background:color-mix(in srgb,var(--accent) 14%,transparent)!important;color:var(--accent)!important}
+
+/* Only the thumb receives an inset ring; track hover has no outer halo. */
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) input[type=range],html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) input[type=range]:hover{box-shadow:none!important;filter:none!important;background:transparent!important}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) input[type=range]::-webkit-slider-thumb{box-shadow:none!important}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) input[type=range].range-thumb-hot::-webkit-slider-thumb{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--text) 70%,var(--accent))!important}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) input[type=range]::-moz-range-thumb{box-shadow:none!important}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) input[type=range].range-thumb-hot::-moz-range-thumb{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--text) 70%,var(--accent))!important}
+.chart-sound-preview{box-shadow:inset 0 0 0 1px transparent!important;transition:box-shadow .12s ease}
+.chart-sound-preview:hover,.chart-sound-preview:focus-visible{box-shadow:inset 0 0 0 1px var(--accent)!important}
+
+/* Open levels share the SSMT timeframe treatment, with their own persisted keys. */
+#qt-settings-modal .qt-open-levels{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;min-height:58px;padding:6px 0}
+#qt-settings-modal .qt-open-levels button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-width:0;min-height:46px;padding:5px 2px;border:0;border-radius:8px;font-size:10px}
+#qt-settings-modal .qt-open-levels button small{font-size:9px;color:var(--muted)}
+#qt-settings-modal .qt-open-levels button[aria-pressed=true] small{color:inherit;opacity:.65}
+
+/* The strip's intrinsic width follows the animated active label. */
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-nav{width:max-content;max-width:calc(100% - 28px);align-self:flex-start;flex:none;justify-content:flex-start}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-nav .chart-tab-label{display:block;width:0;max-width:none;overflow:hidden;transition:width .36s cubic-bezier(.2,.7,.2,1)}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-nav button[aria-selected=true] .chart-tab-label{width:var(--tab-label-width,80px)}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-nav .chart-tab-label>span{display:block;white-space:nowrap}
+/* Web Reduce motion is the owner; OS preference must not override explicit Off. */
+body.reduce-motion :is(#settings-modal,#qt-settings-modal) .chart-settings-nav :is(button,span),
+body.reduce-motion .chart-sound-preview{transition:none!important;animation:none!important}
+/* Fit every extension to its owner and keep samples inside the available space. */
+#settings-select-menu{box-sizing:border-box;min-width:0!important;padding:4px!important;overflow-x:hidden}
+#settings-select-menu button[role=option]{box-sizing:border-box;width:100%;min-width:0;padding:7px 8px!important;gap:4px!important}
+#settings-select-menu button[role=option]>span:first-child{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis}
+#settings-select-menu .settings-option-visual{min-width:0;gap:6px;justify-content:center}
+#settings-select-menu .settings-option-visual svg{width:auto;max-width:42%;height:30px;flex:0 1 auto}
+#settings-select-menu .visual-caption{min-width:0;white-space:normal;overflow-wrap:anywhere}
+#settings-select-menu .settings-option-visual:is([data-visual-kind=size],[data-visual-kind=markerSize]){grid-template-columns:minmax(0,34px) minmax(0,1fr);gap:6px}
+/* The outer frame clips full-height step highlights at its own corners. */
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.qt-number-field,.settings-number-field){padding:0!important;gap:0!important;overflow:hidden!important;grid-template-columns:30px minmax(0,1fr) 30px!important;align-items:stretch!important}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.qt-number-field,.settings-number-field) :is(.qt-number-step,.settings-number-step){width:100%!important;height:100%!important;align-self:stretch;border-radius:0!important}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.qt-number-field,.settings-number-field) input[type=number]{height:100%!important;align-self:stretch}
+/* Explicit tracks prevent inherited menu grids from squeezing option content. */
+html body #settings-select-menu button[role=option]{display:grid!important;grid-template-columns:minmax(0,1fr) 16px!important;grid-template-rows:auto!important;min-height:42px;height:auto!important;align-items:center!important}
+html body #settings-select-menu button[role=option]>span:first-child{grid-column:1!important;grid-row:1!important;width:100%!important;min-width:0!important;max-width:100%;box-sizing:border-box;word-break:normal!important;overflow-wrap:normal!important}
+html body #settings-select-menu button[role=option]>span:last-child{grid-column:2!important;grid-row:1!important;width:16px!important;min-width:16px!important;justify-self:center}
+html body #settings-select-menu .settings-option-visual{display:flex!important;flex-direction:row!important;align-items:center!important;justify-content:center!important;gap:8px!important}
+html body #settings-select-menu .settings-option-visual svg{width:44px!important;min-width:28px;max-width:40%!important;height:30px!important;flex:0 0 44px!important}
+html body #settings-select-menu .settings-option-visual .visual-caption{display:block!important;flex:1 1 auto!important;min-width:0!important;width:auto!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis;overflow-wrap:normal!important;word-break:normal!important;text-align:center}
+html body #settings-select-menu .visual-caption>span,html body #settings-select-menu .visual-caption>small{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap!important;word-break:normal!important}
+html body #settings-select-menu .settings-option-visual .visual-size,html body #settings-select-menu .settings-option-visual .visual-marker{width:34px!important;min-width:34px!important;flex:0 0 34px}

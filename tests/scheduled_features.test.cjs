@@ -33,3 +33,102 @@ test('routes official short links through resolution before choosing an embed',(
  for(const url of ['https://vm.tiktok.com/example/','https://vt.tiktok.com/example/','https://on.soundcloud.com/example','https://spotify.link/example'])assert.deepEqual(TerminalMusicLinks.parse(url),{share:true,url});
  assert.equal(TerminalMusicLinks.parse('https://www.tiktok.com/player/v1/6718335390845095173').id,'6718335390845095173');
 });
+test('music links retain private SoundCloud tokens and fall back to a valid playlist when a video id is invalid',()=>{
+ assert.equal(TerminalMusicLinks.parse('https://soundcloud.com/artist/private?secret_token=s-test&si=tracking').url,'https://soundcloud.com/artist/private?secret_token=s-test');
+ assert.equal(TerminalMusicLinks.parse('https://www.youtube.com/watch?v=bad&list=PLabcdefghijk').url,'https://www.youtube.com/playlist?list=PLabcdefghijk');
+});
+test('popup player scales aspect ratios, moves across full viewport and seeks +/-10s',()=>{
+ const {TerminalCompanions}=require('../frontend/js/terminal_companions.js');
+ assert.equal(typeof TerminalCompanions,'function');
+ const styles=new Map();
+ const panel={
+  offsetWidth:320,offsetHeight:180,dataset:{},
+  classList:{contains:c=>c==='music-mini',add(){},remove(){},toggle(){}},
+  style:{setProperty:(k,v)=>styles.set(k,v),removeProperty:k=>styles.delete(k)},
+  getBoundingClientRect:()=>({left:100,top:100,width:320,height:180})
+ };
+ const seeked=[];
+ const mock={
+  panels:{music:panel},link:{provider:'youtube'},popupRatio:'free',popupRatioButton:{textContent:''},
+  popupRatioProvider:'youtube',duration:120,elapsed:20,videoPopupSize:{w:420,h:280},
+  youtube:{getCurrentTime:()=>20,getDuration:()=>120,seekTo:(t,a)=>seeked.push([t,a])},
+  seek:{style:{setProperty(){}},matches:()=>false,value:20,disabled:false,max:120},clock:{textContent:''},
+  isVideoProvider:TerminalCompanions.prototype.isVideoProvider,
+  getPopupRatioEntry:TerminalCompanions.prototype.getPopupRatioEntry,
+  applyPopupLayout:TerminalCompanions.prototype.applyPopupLayout,
+  placeVideoPopup:TerminalCompanions.prototype.placeVideoPopup,
+  cyclePopupRatio:TerminalCompanions.prototype.cyclePopupRatio,
+  updateMusic:TerminalCompanions.prototype.updateMusic,
+  seekToSeconds:TerminalCompanions.prototype.seekToSeconds,
+  command:TerminalCompanions.prototype.command,
+  formatTime:TerminalCompanions.prototype.formatTime
+ };
+ global.innerWidth=1400;global.innerHeight=900;global.ui=s=>s;
+ mock.applyPopupLayout();
+ assert.equal(styles.get('--music-mini-aspect'),'auto');
+ assert.equal(styles.get('--music-mini-w'),'420px');
+ assert.equal(styles.get('--music-mini-h'),'280px');
+ mock.placeVideoPopup({x:10,y:6});
+ assert.equal(styles.get('--music-top'),'6px');
+ assert.equal(styles.get('--music-left'),'10px');
+ mock.cyclePopupRatio();
+ assert.equal(mock.popupRatio,'16/9');
+ assert.equal(styles.get('--music-mini-aspect'),'16/9');
+ mock.command('forward');
+ mock.command('rewind');
+ assert.deepEqual(seeked,[[30,true],[10,true]]);
+});
+test('hiding music panel keeps music playing in the background without pausing',()=>{
+ const {TerminalCompanions}=require('../frontend/js/terminal_companions.js');
+ const classes=new Set(['open','music-mini']);
+ let paused=0,stopped=0;
+ const edgeAttrs={};
+ global.document={getElementById:()=>({setAttribute:(k,v)=>edgeAttrs[k]=v})};
+ const mock={
+  open:'music',
+  panels:{music:{classList:{toggle:(c,on)=>on?classes.add(c):classes.delete(c),remove:(...cs)=>cs.forEach(c=>classes.delete(c)),contains:c=>classes.has(c)},inert:false}},
+  updateMusicPopupButton(){},
+  stopTabAudio(){stopped++;},
+  command(cmd){if(cmd==='pause')paused++;}
+ };
+ TerminalCompanions.prototype.toggle.call(mock,'music',false);
+ assert.equal(classes.has('open'),false);
+ assert.equal(mock.panels.music.inert,true);
+ assert.equal(edgeAttrs['aria-expanded'],'false');
+ assert.equal(paused,0);
+ assert.equal(stopped,0);
+});
+test('YouTube popup wow stylesheet and track wave delay (--dly) are wired in both modular files and index.html',()=>{
+ const fs=require('node:fs');
+ const css=fs.readFileSync('frontend/css/terminal_companions.css','utf8');
+ const js=fs.readFileSync('frontend/js/terminal_companions.js','utf8');
+ const html=fs.readFileSync('frontend/index.html','utf8');
+ assert.match(css,/@keyframes wow-pop/);
+ assert.match(css,/@keyframes wow-out/);
+ assert.match(css,/@keyframes wow-in/);
+ assert.match(css,/transform:\s*translateX\(-50%\);/);
+ assert.match(js,/spreadTrackWave/);
+ assert.match(html,/@keyframes wow-out/);
+ assert.match(html,/spreadTrackWave/);
+});
+test('Music docked panel removes Hide video button, Open original link, and clips docked video while Popup shows full video',()=>{
+ const fs=require('node:fs');
+ const css=fs.readFileSync('frontend/css/terminal_companions.css','utf8');
+ const js=fs.readFileSync('frontend/js/terminal_companions.js','utf8');
+ const html=fs.readFileSync('frontend/index.html','utf8');
+ assert.doesNotMatch(js,/hideVideoButton/);
+ assert.doesNotMatch(js,/this\.sourceLink/);
+ assert.doesNotMatch(html,/hideVideoButton/);
+ assert.doesNotMatch(html,/this\.sourceLink/);
+ assert.match(css,/#music-panel:not\(\.music-mini\):is\(\[data-provider="youtube"\],\[data-provider="tiktok"\]\)\s+\.music-player-host/);
+ assert.match(html,/#music-panel:not\(\.music-mini\):is\(\[data-provider="youtube"\],\[data-provider="tiktok"\]\)\s+\.music-player-host/);
+ assert.match(css,/#music-panel\.music-mini:is\(\[data-provider="youtube"\],\[data-provider="tiktok"\]\):has\(\.music-player-host iframe\)\s+\.music-player-host/);
+});
+test('YouTube RD Mix playlists strip unembeddable list=RD... and fall back to playing the video',async()=>{
+ const fs=require('node:fs');
+ const js=fs.readFileSync('frontend/js/terminal_companions.js','utf8');
+ assert.match(js,/isMixList=!!\s*\(link\.list&&\/\^RD\/i\.test\(link\.list\)\)/);
+ const parsed=TerminalMusicLinks.parse('https://www.youtube.com/watch?v=FjJzIYTGttg&list=RDMMFjJzIYTGttg&index=1');
+ assert.equal(parsed.id,'FjJzIYTGttg');
+ assert.equal(parsed.list,'RDMMFjJzIYTGttg');
+});

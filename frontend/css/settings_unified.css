@@ -1,0 +1,75 @@
+/* Shared settings geometry for controls, illustrations and menus. */
+:is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal){--settings-field:164px}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) select{text-align:center;text-align-last:center}
+html body :is(#settings-modal,#qt-settings-modal) .chart-setting-row>select:not(.chart-line-style){width:var(--settings-field);min-height:40px;box-sizing:border-box}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) .settings-visual-control{width:var(--settings-field);min-height:40px;height:40px;flex:0 0 auto}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) .settings-visual-control select{height:100%!important;min-height:40px!important;border-radius:11px!important;box-sizing:border-box}
+html body .settings-selected-preview{inset:0 10px;display:grid;grid-template-columns:64px minmax(0,96px);justify-content:center;align-items:center;gap:8px;text-align:center}
+html body .settings-selected-preview svg{width:64px;height:32px;max-width:100%;justify-self:center}
+html body .settings-selected-preview .visual-caption{font-size:12px;line-height:1.3;white-space:normal;text-align:center;opacity:1;min-width:0}
+.visual-caption>span{display:block}
+.visual-caption>small{display:block;font-size:10px;color:var(--muted);margin-top:3px}
+html body .settings-selected-preview .visual-size,html body .settings-selected-preview .visual-marker{width:64px;min-width:0;text-align:center;justify-self:center}
+html body .settings-visual-control:is([data-visual-kind=line],[data-visual-kind=shape],[data-visual-kind=position],[data-visual-kind=labelPosition]) .settings-selected-preview{grid-template-columns:minmax(0,1fr)}
+html body .settings-visual-control[data-visual-kind=position]{height:56px;min-height:56px}
+html body .settings-visual-control[data-visual-kind=position] svg{height:44px;width:100px}
+html body #settings-select-menu{padding:6px;border-radius:16px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--line) transparent;overscroll-behavior:contain}
+html body #settings-select-menu button[role=option]{display:grid;grid-template-columns:18px minmax(0,1fr) 18px;gap:5px;width:100%;min-height:48px;margin:2px 0;padding:8px 9px;border-radius:10px;box-sizing:border-box;align-items:center;text-align:center}
+html body #settings-select-menu button[role=option]::before{content:'';grid-column:1;grid-row:1}
+html body #settings-select-menu button[role=option]>span:first-child{grid-column:2;grid-row:1;min-width:0;text-align:center;white-space:normal;overflow-wrap:anywhere}
+html body #settings-select-menu button[role=option]>span:last-child{grid-column:3;grid-row:1;justify-self:center}
+html body #settings-select-menu .settings-option-visual,html body #settings-select-menu .settings-option-visual:is([data-visual-kind=size],[data-visual-kind=markerSize]){display:grid!important;grid-template-columns:64px minmax(0,96px);justify-content:center;gap:8px;text-align:center}
+html body #settings-select-menu .settings-option-visual svg{width:64px;height:32px;justify-self:center}
+html body #settings-select-menu .settings-option-visual:is([data-visual-kind=line],[data-visual-kind=shape],[data-visual-kind=position],[data-visual-kind=labelPosition]){grid-template-columns:minmax(0,1fr)}
+html body #settings-select-menu .settings-option-visual[data-visual-kind=position] svg{width:100px;height:46px}
+html body #settings-select-menu .settings-option-visual .visual-size,html body #settings-select-menu .settings-option-visual .visual-marker{width:64px;min-width:0;text-align:center;justify-self:center}
+html body #settings-select-menu .visual-caption{opacity:1;font-size:12px;white-space:normal;text-align:center;line-height:1.3}
+html body :is(.settings-number-field,.qt-number-field){width:108px!important;height:38px;align-items:center}
+html body .has-width-preview input[type=number]{padding-bottom:0!important}
+html body .number-width-preview{display:none!important}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) input[type=range]{width:164px;max-width:100%;height:4px;vertical-align:middle;margin:0;flex:0 1 164px}
+html body :is(#settings-modal,#qt-settings-modal) :is(.chart-settings-body,.qt-settings-body,#qt-settings-fields){scrollbar-width:thin;scrollbar-color:var(--line) transparent;scrollbar-gutter:stable}
+html body :is(.tv-template-menu,.template-menu) button{text-align:center;justify-content:center}
+html body #qt-settings-modal .qt-open-levels{min-height:0;padding:8px 0 13px;gap:0;align-items:stretch}
+html body #qt-settings-modal .qt-open-levels button{min-height:42px;height:42px;padding:0 0 10px;gap:0;font:500 11px var(--font-ui);box-shadow:none!important}
+html body #qt-settings-modal .qt-open-levels button::after{display:block!important}
+/* Stable navigation rail, soft label expansion and a short content entrance. */
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-nav{width:calc(100% - 28px);max-width:calc(100% - 28px);box-sizing:border-box;justify-content:space-between;gap:2px;--nav-dur:440ms;--nav-ease:cubic-bezier(.22,1,.36,1)}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-nav button{flex:0 0 auto;transition:background-color .25s ease,color .22s ease,box-shadow .25s ease}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-nav .chart-tab-label{transition:width 440ms cubic-bezier(.22,1,.36,1)}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-nav .chart-tab-label>span{transition:opacity .22s ease,padding-left 440ms cubic-bezier(.22,1,.36,1)}
+html body.reduce-motion :is(#settings-modal,#qt-settings-modal) .chart-settings-nav :is(button,span){transition:none!important}
+@media(max-width:480px){html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal){--settings-field:142px}}
+
+/* Range inputs own only the track and thumb; remove the generic input frame. */
+html body input[type=range]{border:0!important;border-image:none!important;outline:0!important;box-shadow:none!important;padding:0!important;background:transparent!important}
+html body input[type=range]:focus-visible{outline:2px solid var(--accent)!important;outline-offset:5px!important}
+
+/* Compact binary choice: both states stay visible, no popup needed. */
+#settings-modal .motion-segment{position:relative;isolation:isolate;display:grid;grid-template-columns:1fr 1fr;gap:2px;flex:0 0 164px;width:164px;height:38px;box-sizing:border-box;padding:3px;border:1px solid var(--line);border-radius:12px;background:var(--glass2)}
+#settings-modal .motion-segment::before{content:'';position:absolute;z-index:-1;top:3px;bottom:3px;left:3px;width:calc(50% - 4px);border-radius:8px;background:var(--bg);box-shadow:0 1px 4px color-mix(in srgb,var(--text) 12%,transparent);transform:translateX(0);transition:transform .24s cubic-bezier(.22,1,.36,1)}
+#settings-modal .motion-segment[data-value=full]::before{transform:translateX(calc(100% + 2px))}
+#settings-modal .motion-segment>button{display:grid;place-items:center;width:100%;height:100%;min-width:0;min-height:0;padding:0;border:0;border-radius:8px;background:transparent!important;box-shadow:none!important;color:var(--muted);font:500 12px/1 var(--font-ui);cursor:pointer;transition:color .15s ease}
+#settings-modal .motion-segment>button[aria-pressed=true]{color:var(--text);font-weight:650}
+#settings-modal .motion-segment>button:hover{color:var(--accent)}
+#settings-modal .motion-segment>button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+#settings-modal .motion-segment>select[hidden]{display:none!important}
+body.reduce-motion #settings-modal .motion-segment::before,body.reduce-motion #settings-modal .motion-segment>button{transition:none}
+/* Content-sized controls and aligned numeric groups. */
+#settings-modal .settings-range-aligned{display:grid;grid-template-columns:164px 42px;align-items:center;gap:10px;flex:none}
+#settings-modal .settings-range-aligned .chart-range-value{min-width:42px;text-align:right;color:var(--text);font-size:12px;font-variant-numeric:tabular-nums}
+#settings-modal .chart-range-value{width:42px;min-width:42px;text-align:right}
+html body #topbar .dock-clock #live-clock{font-size:12px!important;font-weight:550!important;letter-spacing:normal!important;line-height:1.2}
+html body #topbar .dock-clock #live-clock .dock-sec{font-size:inherit!important;font-weight:400!important}
+html body #settings-modal input[type=text]{color:var(--text)!important;background:var(--glass2)!important;border:1px solid var(--line)!important;border-radius:10px;min-height:36px;padding:6px 10px;box-sizing:border-box;font-family:var(--font-ui)}
+html body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.settings-number-field,.qt-number-field){display:grid!important;grid-template-columns:26px minmax(28px,1fr) 26px!important;align-items:center!important;gap:3px!important;width:108px!important;height:38px!important;padding:3px!important;border-radius:14px!important;background:color-mix(in srgb,var(--text) 3%,var(--bg))!important;border:0!important;box-shadow:none!important}
+html body :is(.settings-number-field,.qt-number-field) input[type=number]{height:30px!important;min-height:0!important;line-height:30px!important;padding:0!important;text-align:center!important;background:transparent!important;border:0!important;box-shadow:none!important}
+html body :is(.settings-number-field,.qt-number-field) button{width:26px!important;height:30px!important;min-height:0!important;min-width:0!important;padding:0!important;display:grid;place-items:center}
+html body .settings-selected-preview{grid-template-columns:48px minmax(0,1fr);gap:6px;inset-inline:8px}
+html body .settings-selected-preview svg{width:48px}
+html body .settings-selected-preview :is(.visual-size,.visual-marker){width:48px}
+html body #settings-modal .chart-settings-dialog{transition:width .38s cubic-bezier(.22,1,.36,1)}
+html body.reduce-motion #settings-modal .chart-settings-dialog{transition:none}
+html body #settings-modal .toolbar-transparency{display:grid!important;grid-template-columns:164px 42px;gap:10px;align-items:center;width:216px;flex:none}
+html body #settings-modal .toolbar-transparency output{width:42px;min-width:42px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums}
+html body #settings-modal :is(.toolbar-transparency,.settings-range-aligned) input[type=range]{width:164px!important;min-width:0!important;max-width:none!important}

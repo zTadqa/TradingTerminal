@@ -1,0 +1,168 @@
+/* Shared drawing UI surfaces follow the active terminal theme. */
+#drawing-settings { --accent: inherit; background: rgb(0 0 0 / .22); backdrop-filter: blur(3px); }
+#drawing-settings .drawing-dialog, .tv-template-save-modal .tv-save-dialog {
+  background: var(--bg) !important; color: var(--text); border: 1px solid var(--line) !important;
+  border-radius: 22px; box-shadow: var(--wow-shadow,0 20px 60px #0004) !important;
+}
+#drawing-settings .drawing-dialog { width: 420px; max-width: calc(100vw - 24px); }
+#drawing-settings .modal-header { padding: 18px 20px 14px; }
+#drawing-settings-title { color: var(--text); font-size: 17px; line-height: 1.4; letter-spacing: normal; }
+#drawing-settings :is(.drawing-rename-btn,.modal-close) {
+  color: var(--muted); background: var(--glass2); border: 1px solid var(--line); border-radius: 10px;
+  width: 30px; height: 30px;
+}
+#drawing-settings :is(.drawing-rename-btn,.modal-close):hover { color: var(--text); background: var(--glass2); border-color: var(--muted); }
+#drawing-settings .drawing-tabs {
+  margin: 0 20px; padding: 4px; gap: 4px; border: 1px solid var(--line); border-radius: 13px; background: var(--glass2);
+}
+#drawing-settings .drawing-tabs button {
+  flex: 1; min-width: 0; padding: 9px 8px; border-radius: 9px; color: var(--muted);
+  font-size: 12px; font-weight: 600; line-height: 1.3; transition: background .15s,color .15s;
+}
+#drawing-settings .drawing-tabs button:hover { color: var(--text); background: var(--glass2); }
+#drawing-settings .drawing-tabs button.active {
+  color: var(--trade-buy-ink,var(--accent-ink)); background: var(--accent); box-shadow: 0 2px 6px #0001;
+}
+#drawing-settings .drawing-tabs button.active::after { content: none; }
+#drawing-settings .drawing-panel { padding: 18px 20px; scrollbar-color: var(--line) transparent; }
+#drawing-settings :is(.tv-row,.tv-check-label,.drawing-check,.coordinate-row label,.visibility-row label) { color: var(--text); }
+#drawing-settings .tv-row { min-height: 44px; margin-bottom: 6px; gap: 12px; grid-template-columns: minmax(110px, .9fr) minmax(0,1fr); }
+#drawing-settings .tv-section-label { color: var(--muted); letter-spacing: .03em; }
+#drawing-settings .drawing-stats-group { border-color: var(--line); }
+#drawing-settings :is(select,input:not([type=checkbox]):not([type=range]):not([type=color]),#drawing-text),
+.tv-template-save-modal .tv-save-input {
+  background-color: var(--glass2) !important; color: var(--text); border: 1px solid var(--line) !important;
+  border-radius: 10px !important; font-size: 13px; box-shadow: none;
+}
+#drawing-settings #drawing-text { padding: 12px; min-height: 110px; line-height: 1.6; }
+#drawing-settings select option { background: var(--bg); color: var(--text); }
+#drawing-settings :is(select,input:not([type=checkbox]),#drawing-text):focus,
+.tv-template-save-modal .tv-save-input:focus {
+  outline: none; border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent);
+}
+#drawing-settings input[type=range] { accent-color: var(--accent); }
+#drawing-settings input[type=checkbox] {
+  appearance: none; position: relative; width: 32px; height: 18px; border: 0; border-radius: 999px;
+  background: color-mix(in srgb,var(--text) 20%,transparent); margin: 0; flex: none; cursor: pointer;
+}
+#drawing-settings input[type=checkbox]::before { content: none; }
+#drawing-settings input[type=checkbox]::after {
+  content: ''; position: absolute; width: 12px; height: 12px; left: 3px; top: 3px;
+  border-radius: 50%; background: var(--bg); transition: transform .15s;
+}
+#drawing-settings input[type=checkbox]:checked { background: var(--accent); }
+#drawing-settings input[type=checkbox]:checked::after { transform: translateX(14px); background: var(--trade-buy-ink,var(--accent-ink)); }
+#drawing-settings :is(.tv-pill-btn,.tv-format-btn) {
+  border-radius: 10px; background: var(--glass2); border-color: var(--line); color: var(--text);
+}
+#drawing-settings :is(.tv-pill-btn,.tv-format-btn):hover { color: var(--text); border-color: var(--muted); background: var(--glass2); }
+#drawing-settings :is(.tv-pill-btn.active,.tv-format-btn[aria-pressed=true]) {
+  color: var(--accent); border-color: var(--accent); background: color-mix(in srgb,var(--accent) 12%,transparent);
+}
+#drawing-settings .tv-stroke-preview { color: var(--text); }
+#drawing-settings .tv-swatch { border-radius: 6px; border-color: var(--line); }
+#drawing-settings .modal-footer, .tv-template-save-modal .modal-footer { border-top: 1px solid var(--line); padding: 14px 20px; gap: 8px; }
+#drawing-settings :is(#drawing-template,.btn-secondary), .tv-template-save-modal .btn-secondary {
+  color: var(--text); background: var(--glass2); border: 1px solid var(--line); border-radius: 10px;
+  height: 34px; padding: 0 13px; font-size: 12px; font-weight: 600;
+}
+#drawing-settings #drawing-template:hover, #drawing-settings .btn-secondary:hover { color: var(--text); background: var(--glass2); border-color: var(--muted); }
+#drawing-settings .btn-primary, .tv-template-save-modal .btn-primary {
+  height: 34px; padding: 0 18px; border-radius: 10px; background: var(--accent); border: 1px solid transparent;
+  color: var(--trade-buy-ink,var(--accent-ink)); font-size: 12px; font-weight: 600;
+}
+#drawing-settings .btn-primary:hover { background: var(--accent); filter: brightness(1.07); }
+#drawing-settings .coordinate-row { grid-template-columns: 100px minmax(0,1fr) minmax(0,1fr); }
+#drawing-settings .coordinate-row.coordinate-single { grid-template-columns: 100px minmax(0,1fr); }
+#drawing-settings .coordinate-row input { min-width: 0; width: 100%; }
+#drawing-settings .visibility-row { grid-template-columns: 100px 56px minmax(0,1fr) 56px; }
+#drawing-title-input { color: var(--text); }
+/* Floating tool strip and its action menu. Preserve the drawing colour swatch itself. */
+.drawing-toolbar {
+  background: var(--bg) !important; border: 1px solid var(--line) !important; border-radius: 16px !important;
+  padding: 5px !important; gap: 3px; color: var(--text); box-shadow: var(--wow-shadow,0 10px 30px #0003) !important;
+}
+.drawing-toolbar :is(.tv-tb-btn,.drawing-grip) {
+  height: 32px; min-width: 32px; border-radius: 10px; color: var(--muted); background: transparent;
+}
+.drawing-toolbar .drawing-grip { min-width: 22px; width: 22px; background: var(--glass2); }
+.drawing-toolbar :is(.tv-tb-btn,.drawing-grip):hover { color: var(--text); background: var(--glass2); }
+.drawing-toolbar .tv-tb-btn.active { color: var(--accent); background: color-mix(in srgb,var(--accent) 12%,transparent); }
+.drawing-toolbar .tv-tb-btn.tv-tb-wide { color: var(--text); }
+.drawing-toolbar .drawing-more {
+  padding: 6px; border-radius: 15px; border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  box-shadow: var(--wow-shadow,0 12px 32px #0003); min-width: 180px;
+}
+.drawing-toolbar .drawing-more button {
+  min-height: 34px; margin: 0; padding: 8px 12px; border-radius: 9px; font-size: 12px;
+  font-weight: 500; line-height: 1.4; color: var(--text); background: transparent;
+}
+.drawing-toolbar .drawing-more button:hover { background: var(--glass2); color: var(--text); }
+.drawing-toolbar .drawing-more .chart-context-divider { margin: 5px 6px; background: var(--line); }
+/* Companion drawing pickers and template dialogs share the same surfaces. */
+.tv-style-popover, .tv-template-menu {
+  background: var(--bg) !important; color: var(--text); border: 1px solid var(--line) !important;
+  border-radius: 15px; box-shadow: var(--wow-shadow,0 12px 32px #0003);
+}
+.tv-template-menu button, .tv-tb-popover .tv-tb-list-item {
+  color: var(--text) !important; background: transparent !important; border-radius: 8px;
+}
+.tv-template-menu button:hover, .tv-template-menu button:focus-visible,
+.tv-tb-popover .tv-tb-list-item:hover { background: var(--glass2) !important; color: var(--text) !important; }
+.tv-tb-popover .tv-tb-list-item.active { background: color-mix(in srgb,var(--accent) 12%,transparent) !important; color: var(--accent) !important; }
+.tv-template-save-modal .tv-save-label { color: var(--muted); }
+.tv-template-save-modal .modal-header { color: var(--text); }
+:is(#drawing-settings,.drawing-toolbar,.tv-template-menu,.tv-style-popover,.tv-template-save-modal) button:focus:not(:focus-visible) { outline: none; }
+:is(#drawing-settings,.drawing-toolbar,.tv-template-menu,.tv-style-popover,.tv-template-save-modal) :is(button,input,select,textarea):focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+@media (max-width: 480px) {
+  #drawing-settings .drawing-dialog { width: calc(100vw - 24px); }
+  #drawing-settings .drawing-panel { padding: 14px; }
+  #drawing-settings .drawing-tabs { margin-inline: 14px; }
+  #drawing-settings .visibility-row { grid-template-columns: 85px 48px minmax(0,1fr) 48px; gap: 5px; }
+}
+
+/* Compact colour picker: square swatches instead of stretched horizontal tiles. */
+.tv-style-popover.tv-color-picker {
+  box-sizing: border-box; width: min(224px,calc(100vw - 16px)); padding: 12px;
+  gap: 10px; border-radius: 17px;
+}
+.tv-color-picker :is(.tv-palette-grid,.tv-cp-custom-grid) {
+  display: grid; grid-template-columns: repeat(10,minmax(0,1fr)); gap: 4px;
+}
+.tv-color-picker .tv-palette-swatch {
+  box-sizing: border-box; width: 100%; height: auto; min-height: 0; aspect-ratio: 1;
+  padding: 0; margin: 0; border-radius: 4px; border: 1px solid rgb(128 128 128 / .18);
+}
+.tv-color-picker .tv-palette-swatch.selected { outline: 2px solid var(--text); outline-offset: 1px; }
+.tv-color-picker .tv-cp-add-btn { min-height: 26px; padding: 4px 8px; font-size: 11px; border-radius: 8px; }
+.tv-color-picker .tv-cp-custom-section { padding-top: 9px; border-color: var(--line); }
+.tv-color-picker .tv-pop-row { gap: 8px; font-size: 11px; line-height: 1.5; }
+.tv-color-picker .tv-pop-row > span:first-child { color: var(--muted); }
+.tv-color-picker .tv-pop-row input[type=range] { min-width: 0; accent-color: var(--accent); }
+.tv-color-picker .tv-pop-row > span:last-child { min-width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
+.tv-color-picker .tv-tb-pop-check {
+  display: flex; align-items: center; gap: 8px; margin: 0; padding-top: 10px;
+  border-top: 1px solid var(--line); font-size: 12px; line-height: 1.5; color: var(--text);
+}
+.tv-color-picker .tv-tb-pop-check input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+
+/* Center template actions and the preset name/badge group consistently. */
+.chart-context-menu button.tv-tpl-action,
+.tv-template-menu > button[role=menuitem],
+.chart-context-menu .tv-tpl-row .tv-tpl-apply {
+ display:flex;align-items:center;justify-content:center;gap:8px;
+ text-align:center;padding:8px 12px;min-height:34px;line-height:1.4;
+}
+.chart-context-menu .tv-tpl-row .tv-tpl-apply > span { flex:0 1 auto;min-width:0;text-align:center; }
+.chart-context-menu .tv-tpl-row .tv-tpl-apply kbd {
+ position:static;flex:none;margin:0;padding:2px 6px;line-height:1.3;
+ color:var(--muted);background:var(--glass2);border:0;border-radius:5px;font-size:10px;
+}
+.chart-context-menu .tv-tpl-row { display:grid;grid-template-columns:28px minmax(0,1fr) 28px;gap:0; }
+.chart-context-menu .tv-tpl-row .tv-tpl-apply { grid-column:1/-1;grid-row:1;width:100%; }
+.chart-context-menu .tv-tpl-row:has(.tv-tpl-delete) .tv-tpl-apply { grid-column:2; }
+.chart-context-menu .tv-tpl-row .tv-tpl-delete { grid-column:3;grid-row:1;margin:0; }
+.tv-template-menu .tv-tpl-empty { text-align:center; }

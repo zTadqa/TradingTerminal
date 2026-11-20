@@ -1,0 +1,13 @@
+/* Shared web typography and a head-first, tapered ruler trail. */
+#topbar .timeframe-group #timeframe-favourites .tf-btn{font-family:var(--font-ui)!important;font-size:13px!important;font-weight:500!important;letter-spacing:normal!important;line-height:1.2!important}
+#topbar .timeframe-group #timeframe-favourites .tf-btn.active{font-weight:700!important}
+#topbar .timeframe-group{position:relative!important}
+#topbar .timeframe-group :is(.tf-ruler-head,.tf-ruler-tail){position:absolute;top:0;left:0;width:2px;display:block;background:var(--text);border-radius:1px;pointer-events:none;z-index:2;opacity:0;transition:none!important;will-change:transform,opacity}
+#topbar .timeframe-group .tf-ruler-head{width:3px}/* Same one-pixel strokes and bottom baseline as the existing seven-pixel ruler. */
+#topbar .timeframe-group :is(.tf-ruler-head,.tf-ruler-tail){width:1px!important;border-radius:0}
+#topbar #btn-symbol-search .badge-circle{display:inline-flex!important;align-items:center;justify-content:center;width:26px;height:26px;min-width:26px;overflow:hidden;border-radius:50%;flex:none}
+#topbar #btn-symbol-search .badge-circle img{display:block;width:100%;height:100%;object-fit:contain}
+/* Settings own the foreground during panel closing transitions. */
+body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal).show{z-index:500!important}
+/* Keep one base tick under the exact active-label center instead of snapping the marker away. */
+#topbar .timeframe-group::after{background-position-x:var(--ruler-phase,0px)!important}

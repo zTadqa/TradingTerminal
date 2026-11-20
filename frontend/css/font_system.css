@@ -1,0 +1,18 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;700&family=Fira+Sans:wght@400;600&display=swap');
+:root {
+ --font-ui: 'Trebuchet MS', 'Fira Sans', sans-serif;
+ --font-bar: 'Roboto Condensed', 'Arial Narrow', sans-serif;
+ --dock-font: var(--font-ui);
+ --font-mono: var(--font-ui);
+ --mono: var(--font-ui);
+}
+html, body, body *, body *::before, body *::after { font-family: var(--font-ui) !important; }
+/* The financial summary and connection-status group are this app's status areas.
+   Navigation/toolbars, chart axes, order tags and controls retain the UI face. */
+body .paper-summary, body .paper-summary *,
+body .dock-market-status, body .dock-market-status * {
+ font-family: var(--font-bar) !important; font-weight: 700;
+}
+body .paper-summary small, body .refresh-rate, body .version, body .license {
+ font-family: var(--font-bar) !important; font-weight: 400;
+}

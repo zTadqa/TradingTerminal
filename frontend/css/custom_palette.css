@@ -1,0 +1,17 @@
+/* Saved custom colors: larger swatch and a separate, tightly bounded delete target. */
+html body .tv-color-picker .tv-cp-custom-section{padding-top:10px}
+html body .tv-color-picker .tv-cp-custom-grid{display:grid!important;grid-template-columns:repeat(auto-fill,50px)!important;gap:8px 4px!important;align-items:center;justify-content:start}
+html body .tv-color-picker .tv-cp-custom-item{position:relative;display:grid!important;grid-template-columns:32px 14px;gap:4px;width:50px;align-items:center;justify-content:start;min-width:0;padding:0}
+html body .tv-color-picker .tv-cp-custom-item .tv-palette-swatch{display:block!important;width:32px!important;min-width:32px!important;max-width:32px!important;height:32px!important;min-height:32px!important;margin:0!important;padding:0!important;border:1px solid var(--line)!important;border-radius:8px!important;box-sizing:border-box;cursor:pointer}
+html body .tv-color-picker .tv-cp-swatch-del{position:static!important;inset:auto!important;display:inline-flex!important;visibility:hidden;opacity:0;width:14px!important;min-width:14px!important;max-width:14px!important;height:14px!important;min-height:14px!important;max-height:14px!important;padding:0!important;margin:0!important;border:0!important;border-radius:4px;background:var(--glass2)!important;color:var(--muted)!important;line-height:1!important;align-items:center;justify-content:center;box-shadow:none!important;transform:none!important;box-sizing:border-box;transition:opacity .12s ease,background-color .12s ease}
+html body .tv-color-picker .tv-cp-swatch-del::before,html body .tv-color-picker .tv-cp-swatch-del::after{content:none!important;display:none!important}
+html body .tv-color-picker .tv-cp-swatch-del svg{width:8px;height:8px;pointer-events:none;flex:none}
+html body .tv-color-picker .tv-cp-custom-item:is(:hover,:focus-within) .tv-cp-swatch-del{visibility:visible;opacity:1}
+html body .tv-color-picker .tv-cp-swatch-del:hover{color:var(--text)!important;background:color-mix(in srgb,var(--text) 14%,var(--bg))!important}
+html body .tv-color-picker .tv-cp-swatch-del:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+html body .tv-color-picker .tv-cp-custom-item .tv-palette-swatch.selected{outline:2px solid var(--accent);outline-offset:2px}
+@media(hover:none){html body .tv-color-picker .tv-cp-swatch-del{visibility:visible;opacity:1}}
+body.reduce-motion .tv-color-picker .tv-cp-swatch-del{transition:none!important}/* Delete sits below each swatch, outside its color-selection target. */
+html body .tv-color-picker .tv-cp-custom-grid{grid-template-columns:repeat(auto-fill,32px)!important;gap:8px 10px!important;align-items:start}
+html body .tv-color-picker .tv-cp-custom-item{width:32px!important;grid-template-columns:32px!important;grid-template-rows:32px 14px;gap:4px;justify-items:center;align-items:center}
+html body .tv-color-picker .tv-cp-custom-item .tv-cp-swatch-del{grid-column:1;grid-row:2;justify-self:center}

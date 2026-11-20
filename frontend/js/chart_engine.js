@@ -11,6 +11,9 @@ class ChartEngine {
     return {from:DrawingModel.logicalIndex(after,DrawingModel.timeAt(before,range.from)),to:DrawingModel.logicalIndex(after,DrawingModel.timeAt(before,range.to))};
   }
   get plotHeight() { return this.container.clientHeight-(this.paneHeight||0); }
+  get plotBottom() {
+    return Math.max(0, this.plotHeight - (this.chart?.timeScale().height?.() ?? 26));
+  }
   constructor(container, symbol, config = {}) {
     this.container = container;
     this.symbol = symbol;
@@ -30,6 +33,10 @@ class ChartEngine {
 
     this.rawBars = [];
     this.bars = [];
+    this._futureStart = 0;
+    this.futureSeries?.setData([]);
+    this.dataRevision = 0;
+    this.dataUpdateKind = 'replace';
     this.htfData = { 'W': [], 'D': [], '4h': [], '1h': [], '15m': [], '5m': [], '1m': [] };
     this.currentTimeframe = '1m';
     this.tfSeconds = 60;
@@ -48,10 +55,7 @@ class ChartEngine {
     // 2. Initialize Overlay Canvas for Trendlines, Boxes, Fib, Measure, etc.
     this.initDrawingOverlay();
 
-    // 3. Navigation Controls
-    this.initNavControls();
-
-    // 4. Legend updates on crosshair move
+    // 3. Legend updates on crosshair move
     this.initLegendListener();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.container);
@@ -69,7 +73,7 @@ class ChartEngine {
         attributionLogo:false,
         background: { type: 'solid', color: this.config.bg },
         textColor: this.config.textColor,
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, sans-serif'
+        fontFamily: '"Trebuchet MS", "Fira Sans", sans-serif'
       },
       localization: { timeFormatter: time => CHART_DATETIME.format(new Date(time * 1000)) },
       grid: {
@@ -78,7 +82,7 @@ class ChartEngine {
       },
       crosshair: {
         mode: LightweightCharts.CrosshairMode.Normal,
-        vertLine: { color: '#434651', style: LightweightCharts.LineStyle.Dashed, width: 1 },
+        vertLine: { labelVisible: false, color: '#434651', style: LightweightCharts.LineStyle.Dashed, width: 1 },
         horzLine: { color: '#434651', style: LightweightCharts.LineStyle.Dashed, width: 1 }
       },
       rightPriceScale: {
@@ -129,8 +133,20 @@ class ChartEngine {
       priceLineWidth: 1
     });
 
+    this.futureSeries = typeof this.chart.addLineSeries === 'function'
+      ? this.chart.addLineSeries({ visible: false, priceScaleId: '', lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false })
+      : null;
+
     this.symbolBadge=document.createElement('img');this.symbolBadge.className='chart-symbol-badge';
     this.symbolBadge.draggable=false;this.updateSymbolBadge();this.container.appendChild(this.symbolBadge);
+    this.setupScaleControls();
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange(()=>this.applyPriceRatio());
+    this.series.attachPrimitive?.({
+      paneViews:()=>[{
+        zOrder:()=> 'bottom',
+        renderer:()=>({draw:target=>target.useMediaCoordinateSpace(({context,mediaSize})=>this.drawEthBackground(context,mediaSize))})
+      }]
+    });
 
     // Double click to reset view
     this.container.addEventListener('dblclick', (e) => {
@@ -141,6 +157,99 @@ class ChartEngine {
     });
   }
 
+  setupScaleControls(){
+    this.scaleControls=document.createElement('div');
+    this.scaleControls.className='chart-scale-modes';
+    for(const [label,title,option] of [['A','Auto scale','autoScale'],['L','Logarithmic scale','mode']]){
+      const button=document.createElement('button');
+      button.type='button';
+      button.textContent=label;
+      button.title=title;
+      button.setAttribute('aria-label',title);
+      button.onclick=()=>{
+        const scale=this.series.priceScale(),options=scale.options();
+        scale.applyOptions({[option]:option==='mode'?(options.mode===1?0:1):!options.autoScale});
+        this.updateScaleControls();
+      };
+      this.scaleControls.append(button);
+    }
+    this.currencyLabel=document.createElement('span');
+    this.currencyLabel.className='chart-scale-currency';
+    this.pricePlus=document.createElement('button');
+    this.pricePlus.type='button';
+    this.pricePlus.className='chart-price-plus';
+    this.pricePlus.textContent='+';
+    this.pricePlus.setAttribute('aria-label','Add alert at cursor price');
+    this.pricePlus.hidden=true;
+    this.pricePlus.onpointerenter=()=>{this.pointerOnPricePlus=true;};
+    this.pricePlus.onpointerleave=()=>{this.pointerOnPricePlus=false;this.pricePlus.hidden=true;};
+    this.pricePlus.onclick=()=>this.onPricePlus?.(this.pricePlusValue);
+    this.container.append(this.scaleControls,this.currencyLabel,this.pricePlus);
+    this.chart.subscribeCrosshairMove(({point})=>{
+      if(this.pointerOnPricePlus)return;
+      const price=point?this.coordinateToPrice(point.y):null;
+      const height=this.plotBottom;
+      this.pricePlus.hidden=!this.appearance?.plusButton||!point||!Number.isFinite(price)||point.y>=height;
+      if(this.pricePlus.hidden)return;
+      const tick=this.metadata?.tickSize;
+      this.pricePlusValue=tick>0?Math.round(price/tick)*tick:price;
+      this.pricePlus.style.top=Math.max(0,Math.min(height-24,point.y-12))+'px';
+    });
+  }
+
+  updateScaleControls(){
+    if(!this.scaleControls||!this.appearance)return;
+    const visibility=this.appearance.scaleModes;
+    this.scaleControls.dataset.visibility=visibility||'Hidden';
+    this.currencyLabel.dataset.visibility=this.appearance.currencyUnit||'Hidden';
+    this.currencyLabel.textContent=this.metadata?.currencyCode||this.metadata?.currency||'USD';
+    const options=this.series.priceScale().options();
+    this.scaleControls.children[0].setAttribute('aria-pressed',String(options.autoScale));
+    this.scaleControls.children[1].setAttribute('aria-pressed',String(options.mode===1));
+    if(!this.appearance.plusButton)this.pricePlus.hidden=true;
+  }
+
+  applyPriceRatio(){
+    const appearance=this.appearance;
+    const scale=this.series.priceScale();
+    if(!appearance?.priceRatio){
+      if(this.priceRatioRestore!==undefined){
+        scale.applyOptions({autoScale:this.priceRatioRestore});
+        this.priceRatioRestore=undefined;
+      }
+      return;
+    }
+    if(!this.bars.length||!scale.setVisibleRange||!scale.getVisibleRange||scale.options().mode!==0)return;
+    const spacing=this.chart.timeScale().options().barSpacing;
+    const margins=scale.options().scaleMargins;
+    const height=(this.plotBottom)*(1-margins.top-margins.bottom);
+    if(!(spacing>0&&height>0))return;
+    const current=scale.getVisibleRange();
+    if(!current)return;
+    const span=appearance.priceUnitsPerBar*height/spacing;
+    if(!Number.isFinite(span)||span<=0||Math.abs(current.to-current.from-span)/span<.001)return;
+    if(this.priceRatioRestore===undefined)this.priceRatioRestore=scale.options().autoScale;
+    const middle=(current.from+current.to)/2;
+    scale.setVisibleRange({from:middle-span/2,to:middle+span/2});
+  }
+
+  drawEthBackground(ctx,size){
+    const color=this.appearance?.ethBackground;
+    if(!color||color==='transparent'||this.appearance.sessionMode==='RTH'||this.tfSeconds>=86400||!this.metadata?.sessionRegular?.session)return;
+    const scale=this.chart.timeScale(),range=scale.getVisibleLogicalRange();
+    if(!range)return;
+    const step=scale.options().barSpacing;
+    ctx.save();
+    ctx.fillStyle=color;
+    const from=Math.max(0,Math.floor(range.from)),to=Math.min(this.bars.length-1,Math.ceil(range.to));
+    for(let i=from;i<=to;i++){
+      if(MarketData.inRegularSession(this.bars[i],this.metadata))continue;
+      const x=scale.timeToCoordinate(this.bars[i].time);
+      if(x!==null)ctx.fillRect(x-step/2,0,step,size.height);
+    }
+    ctx.restore();
+  }
+
   addSeries(type,options,paneIndex=0) {
     return typeof this.chart.addSeries==='function'?this.chart.addSeries(LightweightCharts[type+'Series'],options,paneIndex):this.chart['add'+type+'Series'](options);
   }
@@ -148,7 +257,7 @@ class ChartEngine {
   updateSymbolBadge(){
     if(!this.symbolBadge)return;
     const file={'NQ1!':'nasdaq-100','ES1!':'s-and-p-500','YM1!':'dow-30'}[this.symbol];
-    this.symbolBadge.hidden=!file;this.symbolBadge.alt=this.symbol;this.symbolBadge.title=this.symbol;
+    this.symbolBadge.hidden=!file||this.appearance?.logo===false;this.symbolBadge.alt=this.symbol;this.symbolBadge.title=this.symbol;
     if(file)this.symbolBadge.src='assets/symbols/'+file+'.svg';
   }
 
@@ -179,6 +288,7 @@ class ChartEngine {
     this.container.appendChild(this.overlayCanvas);
 
     this.overlayCtx = this.overlayCanvas.getContext('2d');
+    this.initOverlayScaleSync();
 
     // Redraw drawings on every scroll / zoom / time range change
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
@@ -189,13 +299,50 @@ class ChartEngine {
     this.resizeOverlay();
   }
 
+  initOverlayScaleSync() {
+    if(typeof this.series.attachPrimitive!=='function')return;
+    // Run after the native chart has applied its current price/time transform.
+    // Price-axis drags do not emit visibleLogicalRange changes or crosshair
+    // events, so an external canvas cannot stay aligned from those alone.
+    // This primitive follows native draw frames; it has no idle RAF loop and
+    // never recalculates indicators or changes saved price/time anchors.
+    const bgView = {
+      zOrder: () => 'bottom',
+      renderer: () => ({
+        draw: target => {
+          if (typeof target?.useMediaCoordinateSpace !== 'function') return;
+          target.useMediaCoordinateSpace(({ context }) => {
+            this._hasBgPrimitive = true;
+            this.renderDrawingsBg(context);
+          });
+        }
+      })
+    };
+    const fgView = {
+      zOrder: () => 'top',
+      renderer: () => ({
+        draw: () => {
+          this.renderDrawings({ fromPrimitive: true });
+        }
+      })
+    };
+    this.overlayScaleSync = {
+      attached: param => { this._requestPrimitiveUpdate = param?.requestUpdate || null; },
+      detached: () => { this._requestPrimitiveUpdate = null; this._hasBgPrimitive = false; },
+      paneViews: () => [fgView, bgView]
+    };
+    this.series.attachPrimitive(this.overlayScaleSync);
+  }
+
   resizeOverlay() {
     const rect = this.container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    this.overlayCanvas.width = rect.width * dpr;
-    this.overlayCanvas.height = rect.height * dpr;
+    const w = Math.max(1, Math.round(rect.width * dpr));
+    const h = Math.max(1, Math.round(rect.height * dpr));
+    this.overlayCanvas.width = w;
+    this.overlayCanvas.height = h;
     this.overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
-    this.overlayCtx.scale(dpr, dpr);
+    this.overlayCtx.scale(rect.width > 0 ? w / rect.width : dpr, rect.height > 0 ? h / rect.height : dpr);
     this.renderDrawings();
   }
 
@@ -220,38 +367,98 @@ class ChartEngine {
   // Histories are independent; live 1m replacements never add the same volume twice.
   setHtfData(tf, values) {
     this.htfData[tf] = MarketData.clean(values);
-    this.htfBaselines[tf] = new Map(this.rawBars.map(b => [b.time, b.volume]));
+    // Rendering the active timeframe already emits a data invalidation.
+    // For an inactive timeframe, still invalidate request.* consumers once.
     if (this.currentTimeframe === tf) this.renderCurrentTimeframe(false);
-    this.onDataChange?.();
+    else {
+      if(tf==='D'&&this.appearance&&(this.appearance.lastDayChange||this.appearance.prevDayLine!=='Hidden')){
+        this.updateLegend(this.bars.at(-1));
+        this.renderDrawings();
+      }
+      this.dataUpdateKind = 'keep'; this.dataRevision++; this.onDataChange?.();
+    }
+  }
+
+  displaySessionMetadata(tf=this.currentTimeframe){
+    const regular=this.metadata?.sessionRegular;
+    if(this.appearance?.sessionMode!=='RTH'||!regular?.session||TF_MAP[tf]>=86400)return this.metadata;
+    return {...this.metadata,session:regular.session,sessionCorrections:regular.corrections,sessionType:'RTH'};
   }
 
   getBarsForTimeframe(tf) {
-    if (this.sessionMode === 'RTH') {
-      const filtered = this.rawBars.filter(b => MarketData.inRegularSession(b, this.metadata));
-      return MarketData.aggregate(filtered, tf, { ...this.metadata, session: this.metadata.sessionRegular?.session, sessionType: 'RTH' });
+    if(this.appearance?.sessionMode==='RTH'&&this.metadata?.sessionRegular?.session&&TF_MAP[tf]<86400){
+      if(this.regularBarsSource!==this.rawBars||!this.regularBarsByTf)this.regularBarsByTf=new Map();
+      this.regularBarsSource=this.rawBars;
+      if(!this.regularBarsByTf.has(tf)){
+        const minutes=this.rawBars.filter(bar=>MarketData.inRegularSession(bar,this.metadata));
+        const regular=this.displaySessionMetadata(tf);
+        this.regularBarsByTf.set(tf,MarketData.aggregate(minutes,tf,regular));
+      }
+      return this.regularBarsByTf.get(tf).slice();
     }
     if (tf === '1m') return this.rawBars.map(b => ({ ...b }));
-    return (this.htfData[tf] || []).map(b => ({ ...b }));
+    const native = (this.htfData[tf] || []).map(b => ({ ...b }));
+    if (!this.rawBars?.length || ['1M', '3M'].includes(tf) || typeof MarketData?.aggregate !== 'function') {
+      return native;
+    }
+    if (!native.length) return MarketData.aggregate(this.rawBars, tf, this.metadata);
+    const lastOpen = native[native.length - 1].time;
+    const coversLastBucket = this.rawBars[0].time <= lastOpen;
+    let idx = this.rawBars.length;
+    while (idx > 0 && this.rawBars[idx - 1].time >= lastOpen) idx--;
+    if (idx >= this.rawBars.length) return native;
+    const tail = coversLastBucket
+      ? this.rawBars.slice(idx)
+      : this.rawBars.slice(idx).filter(b => MarketData.bucket(b.time, tf, this.metadata) > lastOpen);
+    if (!tail.length) return native;
+    const tailAgg = MarketData.aggregate(tail, tf, this.metadata);
+    if (!tailAgg.length) return native;
+    const merged = coversLastBucket && tailAgg[0].time === lastOpen ? native.slice(0, -1) : native;
+    for (const b of tailAgg) {
+      if (!merged.length || b.time > merged[merged.length - 1].time) merged.push(b);
+      else if (b.time === merged[merged.length - 1].time) merged[merged.length - 1] = b;
+    }
+    return merged;
   }
 
   renderCurrentTimeframe(reset = true) {
     const previous = this.chart.timeScale().getVisibleLogicalRange();
     const previousBars=this.bars;
     const available = this.getBarsForTimeframe(this.currentTimeframe);
-    if(this.replayMode&&Number.isFinite(this.replayClock))this.replayIndex=TerminalTime.closedIndex(available,this.currentTimeframe,this.metadata,this.replayClock);
+    if(this.replayMode&&Number.isFinite(this.replayClock))this.replayIndex=TerminalTime.closedIndex(available,this.currentTimeframe,this.displaySessionMetadata(),this.replayClock);
     this.bars = this.replayMode ? available.slice(0, this.replayIndex) : available;
     this.renderCandleData();
-    if (reset && this.bars.length) this.resetView();
+    if ((reset || (previous && previousBars.length > 10 && previous.from >= previousBars.length - 5)) && this.bars.length) this.resetView();
     else if (previous) this.chart.timeScale().setVisibleLogicalRange(ChartEngine.rebaseRange(previousBars,this.bars,previous,this.tfSeconds));
     this.updateLegend(this.bars[this.bars.length - 1]);
-    this.container.dataset.empty = this.bars.length ? '' : 'Không có dữ liệu cho mã/khung này';
+    this.container.dataset.empty = this.bars.length ? '' : ui('No data for this symbol/timeframe');
     this.renderDrawings();
-    this.onDataChange?.();
+    this.updateCountdown?.();
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => this.positionCountdown?.());
+    this.dataUpdateKind = 'replace';
+    this.dataRevision++;this.onDataChange?.();
+  }
+
+  updateFutureWhitespace(bars) {
+    if (!this.futureSeries) return;
+    const last = bars?.at(-1);
+    if (!last || !Number.isFinite(last.time)) {
+      this._futureStart = 0;
+      this.futureSeries.setData([]);
+      return;
+    }
+    const step = this.tfSeconds || 60;
+    this._futureStart = last.time + step;
+    const count = 300;
+    const pts = new Array(count);
+    for (let i = 1; i <= count; i++) pts[i - 1] = { time: last.time + i * step };
+    this.futureSeries.setData(pts);
   }
 
   renderCandleData(){
     const bars=this.replayPreview?this.getBarsForTimeframe(this.currentTimeframe):this.bars;
     this.series.setData(this.appearance?ChartAppearance.candleData(this,bars):bars);
+    this.updateFutureWhitespace(bars);
   }
 
   setTimeframe(tf) {
@@ -264,8 +471,9 @@ class ChartEngine {
   }
 
   setData(values) {
-    const wasEmpty = !this.rawBars.length;
-    this.rawBars = MarketData.clean(values);
+    const cleaned = MarketData.clean(values);
+    const wasEmpty = !this.rawBars.length || (this.rawBars.length <= 2 && cleaned.length > 2);
+    this.rawBars = cleaned;
     this.htfData['1m'] = this.rawBars;
     this.renderCurrentTimeframe(wasEmpty);
   }
@@ -273,32 +481,59 @@ class ChartEngine {
   updateBar(value) {
     const bar = MarketData.clean([value])[0];
     if (!bar) return;
-    const index = this.rawBars.findIndex(b => b.time >= bar.time);
-    if (index < 0) this.rawBars.push(bar);
-    else if (this.rawBars[index].time === bar.time) this.rawBars[index] = bar;
-    else this.rawBars.splice(index, 0, bar);
+    const rawLast = this.rawBars[this.rawBars.length - 1];
+    if (!rawLast || bar.time > rawLast.time) this.rawBars.push(bar);
+    else if (bar.time === rawLast.time) this.rawBars[this.rawBars.length - 1] = bar;
+    else {
+      const index = this.rawBars.findIndex(b => b.time >= bar.time);
+      if (index < 0) this.rawBars.push(bar);
+      else if (this.rawBars[index].time === bar.time) this.rawBars[index] = bar;
+      else this.rawBars.splice(index, 0, bar);
+    }
     this.htfData['1m'] = this.rawBars;
+    this.regularBarsByTf=null;
     if (this.replayMode) return;
-    const next = this.getBarsForTimeframe(this.currentTimeframe);
+    if(this.appearance?.sessionMode==='RTH'&&this.metadata?.sessionRegular?.session&&this.tfSeconds<86400){
+      this.renderCurrentTimeframe(false);
+      return;
+    }
     const last = this.bars[this.bars.length - 1];
-    const tail = next[next.length - 1];
     const historical = last && bar.time < last.time;
-    this.bars = next;
-    if (tail && (!last || tail.time >= last.time) && !historical) this.series.update(this.appearance?ChartAppearance.candleData(this,next.slice(-2)).at(-1):tail);
-    else this.series.setData(this.appearance?ChartAppearance.candleData(this,next):next);
+    let next;
+    if (this.currentTimeframe === '1m' && !historical && this.bars.length) {
+      if (bar.time === last.time) this.bars[this.bars.length - 1] = { ...bar };
+      else this.bars.push({ ...bar });
+      next = this.bars;
+    } else {
+      next = this.getBarsForTimeframe(this.currentTimeframe);
+      this.bars = next;
+    }
+    const tail = next[next.length - 1];
+    if (tail && (!last || tail.time >= last.time) && !historical) {
+      this.series.update(this.appearance?ChartAppearance.candleData(this,next.slice(-2)).at(-1):tail);
+      if (tail.time >= (this._futureStart || 0)) this.updateFutureWhitespace(next);
+    } else {
+      this.series.setData(this.appearance?ChartAppearance.candleData(this,next):next);
+      this.updateFutureWhitespace(next);
+    }
     this.updateLegend(tail);
     this.renderDrawings();
-    this.onDataChange?.();
+    this.dataUpdateKind=historical?'replace':'tail';
+    this.dataRevision++;this.onDataChange?.();
   }
 
   clearData() {
     this.updateSymbolBadge();
     this.rawBars = [];
     this.bars = [];
+    this._futureStart = 0;
+    this.futureSeries?.setData([]);
     this.htfData = {};
     this.htfBaselines = {};
     this.replayMode = false;
     this.series.setData([]);
+    this.dataUpdateKind = 'replace';
+    this.dataRevision++;
     this.container.querySelector('.chart-legend').textContent = this.symbol;
     this.renderDrawings();
   }
@@ -334,12 +569,17 @@ class ChartEngine {
       this.customSeries=[];
     }
     descriptors.forEach((descriptor,i) => {
-      const options = { color: descriptor.color || '#2962ff', lineWidth: Math.max(1, Math.min(4, Math.round(descriptor.width || 1))),
-        title: descriptor.title || '', priceLineVisible: false, lastValueVisible: false,
-        lineStyle:descriptor.lineStyle==='dashed'?2:descriptor.lineStyle==='dotted'?1:0,lineType:descriptor.step?1:0 };
-      if(descriptor.type==='area')Object.assign(options,{lineColor:options.color,topColor:options.color,bottomColor:'transparent'});
-      const series = this.customSeries[i] || this.addSeries(descriptor.type==='histogram'?'Histogram':descriptor.type==='area'?'Area':'Line',options);
-      series._indicatorType=descriptor.type||'line'; series.applyOptions({...options,lastValueVisible:this.appearance?.indicatorValues==='Value'});
+      const kind=descriptor.type||'line';
+      const options = (kind==='candle'||kind==='bar')
+        ? { title: descriptor.title || '', priceLineVisible: false, lastValueVisible: false }
+        : { color: descriptor.color || '#2962ff', lineWidth: Math.max(1, Math.min(4, Math.round(descriptor.width || 1))),
+            title: descriptor.title || '', priceLineVisible: false, lastValueVisible: false,
+            lineStyle:descriptor.lineStyle==='dashed'?2:descriptor.lineStyle==='dotted'?1:0,lineType:descriptor.step?1:0,
+            ...(descriptor.markersOnly?{lineVisible:false,pointMarkersVisible:true,pointMarkersRadius:Math.max(2,Math.round(descriptor.width||2))}:{}) };
+      if(kind==='area')Object.assign(options,{lineColor:options.color,topColor:options.color,bottomColor:'transparent'});
+      const seriesType=kind==='histogram'?'Histogram':kind==='area'?'Area':kind==='candle'?'Candlestick':kind==='bar'?'Bar':'Line';
+      const series = this.customSeries[i] || this.addSeries(seriesType,options);
+      series._indicatorType=kind; series.applyOptions({...options,lastValueVisible:this.appearance?.indicatorValues==='Value'});
       series.setData(descriptor.data);
       this.customSeries[i]=series;
     });
@@ -377,10 +617,12 @@ class ChartEngine {
         panel.appendChild(group);groups.set(key,group);
       }
       const table = document.createElement('table');
+      if (descriptor.bgcolor) table.style.background = descriptor.bgcolor;
+      if (descriptor.frameWidth && descriptor.frameColor) table.style.border = `${descriptor.frameWidth}px solid ${descriptor.frameColor}`;
       if (descriptor.title) { const caption = table.createCaption(); caption.textContent = descriptor.title; }
       for (const row of descriptor.rows || []) {
         const tr = table.insertRow();
-        for (const value of row) { const td = tr.insertCell(); td.textContent = String(value && typeof value==='object' ? value.text??'' : value??''); if(value?.color)td.style.color=value.color;if(value?.background)td.style.background=value.background;if(value?.align)td.style.textAlign=value.align;if(value?.size)td.style.fontSize=Math.max(8,Math.min(72,value.size))+'px'; }
+        for (const value of row) { const td = tr.insertCell(); td.textContent = String(value && typeof value==='object' ? value.text??'' : value??''); if(value?.color)td.style.color=value.color;if(value?.background)td.style.background=value.background;if(value?.align)td.style.textAlign=value.align;if(value?.size)td.style.fontSize=Math.max(8,Math.min(72,value.size))+'px';if(value?.bold)td.style.fontWeight='700';if(value?.italic)td.style.fontStyle='italic';if(value?.fontFamily==='monospace')td.style.fontFamily='"Trebuchet MS", "Fira Sans", sans-serif';if(descriptor.borderWidth===0)td.style.border='none';else if(descriptor.borderColor)td.style.borderColor=descriptor.borderColor; }
       }
       for(const merge of (descriptor.merges||[]).slice(0,3000)){if(![merge.startRow,merge.endRow,merge.startCol,merge.endCol].every(Number.isInteger)||merge.startRow<0||merge.startCol<0||merge.endRow<merge.startRow||merge.endCol<merge.startCol||merge.endRow>=table.rows.length||merge.endCol>=30)continue;const cell=table.rows[merge.startRow]?.cells[merge.startCol];if(!cell)continue;cell.colSpan=merge.endCol-merge.startCol+1;cell.rowSpan=merge.endRow-merge.startRow+1;for(let r=merge.startRow;r<=merge.endRow;r++)for(let c=merge.startCol;c<=merge.endCol;c++)if(r!==merge.startRow||c!==merge.startCol){const covered=table.rows[r]?.cells[c];if(covered)covered.hidden=true;}}
       groups.get(key).appendChild(table);
@@ -407,7 +649,7 @@ class ChartEngine {
     if(pane.series?.length||pane.paints?.length)PinePainter.draw(ctx,adapter,pane,width,height);
     for(const drawing of pane.drawings)DrawingModel.draw(ctx,adapter,drawing);
     ctx.restore();
-    ctx.fillStyle=this.config.textColor;ctx.font='10px Arial';ctx.textAlign='left';
+    ctx.fillStyle=this.config.textColor;ctx.font='10px "Trebuchet MS", "Fira Sans", sans-serif';ctx.textAlign='left';
     for(let i=0;i<=4;i++){const value=pane.min+range*i/4,at=y(value);if(at>=29&&at<height-3)ctx.fillText(value.toFixed(0),width-59,at+3);}
   }
 
@@ -469,28 +711,25 @@ class ChartEngine {
 
   // NAVIGATION & ZOOM CONTROLS
   initNavControls() {
-    const btnZoomOut = this.container.querySelector('.btn-zoom-out');
-    const btnZoomIn = this.container.querySelector('.btn-zoom-in');
-    const btnScrollLeft = this.container.querySelector('.btn-scroll-left');
-    const btnScrollRight = this.container.querySelector('.btn-scroll-right');
-    const btnReset = this.container.querySelector('.btn-reset');
-
-    if (btnZoomOut) btnZoomOut.addEventListener('click', (e) => { e.stopPropagation(); this.zoomOut(); });
-    if (btnZoomIn) btnZoomIn.addEventListener('click', (e) => { e.stopPropagation(); this.zoomIn(); });
-    if (btnScrollLeft) btnScrollLeft.addEventListener('click', (e) => { e.stopPropagation(); this.scrollLeft(); });
-    if (btnScrollRight) btnScrollRight.addEventListener('click', (e) => { e.stopPropagation(); this.scrollRight(); });
-    if (btnReset) btnReset.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (window.syncCtrl && window.syncCtrl.syncEnabled) {
-        window.syncCtrl.resetAllCharts();
-      } else {
-        this.resetView();
-      }
-    });
+    const controls = [
+      ['.btn-zoom-out', () => this.zoomOut()],
+      ['.btn-zoom-in', () => this.zoomIn()],
+      ['.btn-scroll-left', () => this.scrollLeft()],
+      ['.btn-scroll-right', () => this.scrollRight()],
+      ['.btn-reset', () => this.resetView()]
+    ];
+    for (const [selector, action] of controls) {
+      this.container.querySelector(selector)?.addEventListener('click', event => {
+        event.stopPropagation();
+        if (window.syncCtrl) window.syncCtrl.runLocalNavigation(this, action);
+        else action();
+      });
+    }
   }
 
   resetView() {
     this.chart.priceScale('right').applyOptions({ autoScale: true });
+    this.updateScaleControls();
     this.chart.timeScale().resetTimeScale();
     if (this.bars && this.bars.length > 0) {
       const lastIdx = this.bars.length - 1;
@@ -607,7 +846,23 @@ class ChartEngine {
 
   // LEGEND
   initLegendListener() {
+    const label = document.createElement('span');
+    label.className = 'chart-crosshair-time';
+    label.hidden = true;
+    label.setAttribute('aria-hidden', 'true');
+    this.container.append(label);
+    const timeScale = this.chart.timeScale();
     this.chart.subscribeCrosshairMove((param) => {
+      const axisHeight = timeScale.height();
+      label.hidden = !param?.point || !Number.isFinite(param.time) || axisHeight === 0;
+      if (!label.hidden) {
+        const formatter = this.chart.options().localization.timeFormatter;
+        label.textContent = formatter(param.time);
+        const half = label.offsetWidth / 2;
+        const width = timeScale.width();
+        label.style.left = Math.max(half, Math.min(width - half, param.point.x)) + 'px';
+        label.style.bottom = Math.max(0, (axisHeight - label.offsetHeight) / 2) + 'px';
+      }
       if (!param || !param.time || !param.seriesData) {
         if (this.bars.length > 0) {
           this.updateLegend(this.bars[this.bars.length - 1]);
@@ -621,48 +876,175 @@ class ChartEngine {
     });
   }
 
-  updateLegend(bar) {
-    const legendEl = this.container.querySelector('.chart-legend');
-    if (!legendEl) return;
-    if (!bar) { legendEl.textContent = this.symbol + ' · Chưa có dữ liệu'; return; }
+  updateLegend() {
+    // Status line has been retired; old workspaces must not restore its display.
+    const legend=this.container.querySelector('.chart-legend');
+    if(legend){legend.replaceChildren();legend.hidden=true;}
+  }
 
-    const s=this.appearance,precision=s?.precision==='Default'||!s?2:Number(s.precision),format=n=>Number(n).toFixed(precision);
-    const index=this.bars.findIndex(b=>b.time===bar.time),previous=this.bars[index-1]?.close??bar.open;
-    const diff=bar.close-previous,diffPct=previous?diff/previous*100:0;
-    legendEl.replaceChildren();legendEl.style.color=s?.textColor||this.config.textColor;
-    const add=(text,className)=>{const span=document.createElement('span');span.className=className||'';span.textContent=text;legendEl.appendChild(span);};
-    if(s?.logo)add(({ 'NQ1!':'100','ES1!':'500','YM1!':'30' })[this.symbol]||this.symbol.slice(0,1),'legend-logo '+(this.symbol==='ES1!'?'legend-logo-es':''));
-    if(s?.title!==false){const description=this.metadata?.description||this.symbol;const title=s?.titleMode==='Name'?description:s?.titleMode==='Name and ticker'?description+' · '+this.symbol:this.symbol;add(`${title} · ${this.currentTimeframe} · ${this.sessionMode||'ETH'}`,'legend-symbol');}
-    if(s?.marketStatus)add(this.marketLive?'● Live':'○ Stale','legend-market');
-    if(s?.chartValues!==false)add(`O ${format(bar.open)}  H ${format(bar.high)}  L ${format(bar.low)}  C ${format(bar.close)}`,'legend-ohlc');
-    if(s?.barChange!==false)add(`${diff>=0?'+':''}${format(diff)} (${diffPct.toFixed(2)}%)`,diff>=0?'price-up':'price-down');
-    if(s?.volume)add(`Vol ${Number(bar.volume||0).toLocaleString('en-US')}`,'legend-volume');
+  previousDayClose(time){
+    const daily=this.htfData.D||[];
+    if(!this.metadata?.timezone||this.tfSeconds>86400)return null;
+    if(this.currentTimeframe==='D')return daily.findLast(bar=>bar.time<time)?.close;
+    const start=MarketData.bucket(time,'D',this.metadata);
+    const date=MarketData.parts(start,this.metadata.timezone);
+    const session=(this.metadata.session||'').match(/^(\d{4})-(\d{4})/);
+    const overnight=session&&session[1]>=session[2]?1:0;
+    const cutoff=Date.UTC(date.year,date.month-1,date.day+overnight)/1000;
+    return daily.findLast(bar=>bar.time<cutoff)?.close;
   }
 
   updateCountdown(){
     const a=this.appearance,visible=a?.symbolLine?.toLowerCase().includes('value')??true;
-    if(!a?.countdown||!visible){this.countdownLabel?.remove();this.countdownLabel=null;return;}
-    if(!this.countdownLabel){const el=document.createElement('div');el.className='chart-countdown';el.innerHTML='<span class="axis-price"></span><span class="axis-countdown"></span>';this.container.appendChild(el);this.countdownLabel=el;}
-    this.series.applyOptions({lastValueVisible:false});
+    const showName=a?.symbolLine?.toLowerCase().includes('name');
+    if(!visible){
+      this.countdownLabel?.remove();this.countdownLabel=null;
+      this.priceTail?.remove();this.priceTail=null;this._countdownRingSize=null;this._countdownClock=null;
+      return;
+    }
+    if(!this.countdownLabel){
+      const el=document.createElement('div');el.className='chart-countdown';
+      el.innerHTML='<span class="axis-price"></span><span class="axis-countdown"></span><svg class="cd-ring" aria-hidden="true"><rect class="cd-track"/><path class="cd-arc cd-arc-r" pathLength="1"/><path class="cd-arc cd-arc-l" pathLength="1"/></svg>';
+      this.container.appendChild(el);this.countdownLabel=el;
+      const tail=document.createElementNS('http://www.w3.org/2000/svg','svg');
+      tail.classList.add('price-tail');tail.setAttribute('aria-hidden','true');
+      tail.innerHTML='<path class="tail-line"/><line class="tail-link"/><circle class="tail-dot" r="2.5"/>';
+      this.container.appendChild(tail);this.priceTail=tail;
+    }
+    this.series.applyOptions({lastValueVisible:false,priceLineVisible:false});
     const b=this.bars.at(-1),now=this.replayMode?this.replayClock:Date.now()/1000;
-    const metadata=this.sessionMode==='RTH'?{...this.metadata,session:this.metadata.sessionRegular?.session,sessionCorrections:this.metadata.sessionRegular?.corrections}:this.metadata;
-    const raw=this.currentTimeframe==='1m'?this.rawBars:this.htfData[this.currentTimeframe]||[];
+    const metadata=this.displaySessionMetadata();
+    const nativeOrAgg=this.currentTimeframe==='1m'?this.rawBars:(this.htfData[this.currentTimeframe]?.length?this.htfData[this.currentTimeframe]:this.getBarsForTimeframe(this.currentTimeframe));
+    const raw=(metadata.sessionType==='RTH'&&this.appearance?.sessionMode==='RTH')?this.getBarsForTimeframe(this.currentTimeframe):(this.replayMode?nativeOrAgg:(this.bars?.length?this.bars:nativeOrAgg));
     let lo=0,hi=raw.length;while(lo<hi){const mid=(lo+hi)>>1;if(raw[mid].time<=now)lo=mid+1;else hi=mid;}
-    // Read timestamps only for the in-progress interval; Replay price/indicators stay closed-bar only.
-    const current=raw[lo-1],session=TerminalTime.activeSession(now,metadata),seconds=current?Math.max(0,Math.ceil(TerminalTime.end({time:current.time},this.currentTimeframe,metadata)-now)):0;
-    const label=this.countdownLabel,y=b?this.series.priceToCoordinate(b.close):null;label.hidden=!b||y===null||y<0||y>this.plotHeight-26;
-    if(!b)return;label.querySelector('.axis-price').textContent=this.series.priceFormatter().format(b.close);
-    const timer=label.querySelector('.axis-countdown');timer.hidden=!session||seconds<=0;timer.textContent=timer.hidden?'':TerminalTime.format(seconds);
-    label.style.background=a.symbolLineColor||'#211f1d';label.style.color=TerminalFeatures.contrast(a.symbolLineColor||'#211f1d');
-    label.style.fontSize=(a.fontSize||12)+'px';label.style.top=Math.max(0,Math.min(this.plotHeight-label.offsetHeight-26,(y??0)-(a.fontSize||12)*.7))+'px';
+    // Replay price remains the last closed candle; only timer timestamps read the in-progress bar.
+    const current=raw[lo-1],session=TerminalTime.activeSession(now,metadata);
+    const end=current?TerminalTime.end({time:current.time},this.currentTimeframe,metadata):now;
+    const seconds=current?Math.max(0,Math.ceil(end-now)):0;
+    const label=this.countdownLabel,timer=label.querySelector('.axis-countdown');
+    timer.hidden=!a?.countdown||!session||seconds<=0;
+    timer.textContent=timer.hidden?'':TerminalTime.format(seconds);
+    if(b)label.querySelector('.axis-price').textContent=(showName?this.symbol+' ':'')+this.series.priceFormatter().format(b.close);
     this.positionCountdown();
+    this.updateCountdownArc(seconds,Math.max(1,end-(current?.time??end)),current?.time,timer.hidden);
+  }
+  updateCountdownArc(seconds,duration,barTime,hidden){
+    const ring=this.countdownLabel?.querySelector('.cd-ring');if(!ring)return;
+    ring.toggleAttribute('hidden',hidden);
+    const reduced=document.body.classList.contains('reduce-motion')||matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const remaining=this.replayMode?seconds:Math.max(0,barTime+duration-Date.now()/1000);
+    const offset=String(-(1-Math.max(0,Math.min(1,remaining/duration))));
+    for(const arc of ring.querySelectorAll('.cd-arc')){
+      arc.getAnimations().forEach(animation=>animation.cancel());
+      arc.style.transition='none';
+      arc.style.strokeDashoffset=offset;
+      if(!hidden&&!reduced&&!this.replayMode&&remaining>0){
+        arc.animate([{strokeDashoffset:offset},{strokeDashoffset:'-1'}],{duration:remaining*1000,easing:'linear',fill:'forwards'});
+      }
+    }
+    this._countdownClock={seconds,barTime};
+  }
+  buildCountdownRing(){
+    const label=this.countdownLabel,w=label.offsetWidth,h=label.offsetHeight;
+    if(!w||!h||this._countdownRingSize===w+':'+h)return;
+    this._countdownRingSize=w+':'+h;
+    const ring=label.querySelector('.cd-ring'),i=.5,r=7-i,m=w/2;
+    ring.setAttribute('viewBox',`0 0 ${w} ${h}`);
+    const track=ring.querySelector('.cd-track');
+    for(const [key,value]of Object.entries({x:i,y:i,width:w-2*i,height:h-2*i,rx:r}))track.setAttribute(key,value);
+    ring.querySelector('.cd-arc-r').setAttribute('d',`M${m} ${i}H${w-i-r}A${r} ${r} 0 0 1 ${w-i} ${i+r}V${h-i-r}A${r} ${r} 0 0 1 ${w-i-r} ${h-i}H${m}`);
+    ring.querySelector('.cd-arc-l').setAttribute('d',`M${m} ${i}H${i+r}A${r} ${r} 0 0 0 ${i} ${i+r}V${h-i-r}A${r} ${r} 0 0 0 ${i+r} ${h-i}H${m}`);
+  }
+  static priceLineSegments(start,end,y,obstacles=[],gap=3){
+    const blocks=obstacles.filter(b=>y>=b.top-gap&&y<=b.bottom+gap&&b.right>start&&b.left<end)
+      .map(b=>[Math.max(start,b.left-gap),Math.min(end,b.right+gap)]).sort((a,b)=>a[0]-b[0]);
+    const segments=[];let cursor=start;
+    for(const [left,right]of blocks){if(left>cursor)segments.push([cursor,left]);cursor=Math.max(cursor,right);}
+    if(cursor<end)segments.push([cursor,end]);
+    return segments;
+  }
+  static priceLabelTop(desired,height,plotHeight,obstacles=[],gap=4){
+    const limit=Math.max(0,plotHeight-height),target=Math.max(0,Math.min(limit,desired));
+    const blocked=obstacles.filter(r=>Number.isFinite(r.top)&&Number.isFinite(r.bottom)&&r.bottom>=0&&r.top<=plotHeight)
+      .map(r=>({top:Math.max(0,r.top-gap),bottom:Math.min(plotHeight,r.bottom+gap)})).sort((a,b)=>a.top-b.top);
+    let cursor=0,best=null,distance=Infinity;
+    const consider=end=>{
+      if(end-cursor<height)return;
+      const top=Math.max(cursor,Math.min(end-height,target)),delta=Math.abs(top-target);
+      if(delta<distance){best=top;distance=delta;}
+    };
+    for(const r of blocked){consider(r.top);cursor=Math.max(cursor,r.bottom);}
+    consider(plotHeight);
+    return best;
   }
   positionCountdown(){
-    const label=this.countdownLabel;if(!label)return;const b=this.bars?.at(-1);if(!b)return;const y=this.series.priceToCoordinate(b.close);label.hidden=y===null||y<0||y>this.plotHeight-26;if(label.hidden)return;label.style.top=Math.max(0,Math.min(this.plotHeight-label.offsetHeight-26,y-(this.appearance?.fontSize||12)*.7))+'px';label.style.width=Math.max(50,this.chart.priceScale('right').width())+'px';
+    const label=this.countdownLabel,tail=this.priceTail,bar=this.bars?.at(-1);
+    if(!label)return;
+    const y=bar?this.series.priceToCoordinate(bar.close):null;
+    label.hidden=y===null||y<0||y>this.plotBottom;
+    if(tail)tail.toggleAttribute('hidden',label.hidden);
+    if(label.hidden)return;
+    const axisW=this.chart.priceScale('right').width()||44;
+    const containerStyle=getComputedStyle(this.container);
+    const containerRect=this.container.getBoundingClientRect();
+    const chartRect=this.chart.chartElement?.()?.getBoundingClientRect();
+    // Canvas widths are rounded independently of the fractional grid cell.
+    // Anchor to the actual chart edge, not a fixed inset from its wrapper.
+    label.style.right=Math.max(0,containerRect.right-(parseFloat(containerStyle.borderRightWidth)||0)-(chartRect?.right??containerRect.right))+'px';
+    label.style.width='auto';
+    const price=label.querySelector('.axis-price');
+    // The price cell begins at the axis origin; paint the separator independently.
+    price.style.minWidth='0';
+    price.style.width=Math.max(1,axisW)+'px';
+    label.style.setProperty('--price-axis-width',axisW+'px');
+    // Match the axis renderer's integer device-pixel border at fractional DPI.
+    const pixelRatio=globalThis.devicePixelRatio||1;
+    label.style.setProperty('--price-axis-line-width',(Math.max(1,Math.floor(pixelRatio))/pixelRatio)+'px');
+    const axisFont=this.chart.options?.()?.layout;
+    const fontSize=axisFont?.fontSize??this.appearance?.fontSize??12;
+    label.style.setProperty('--price-font-family',axisFont?.fontFamily||containerStyle.fontFamily);
+    // Lightweight Charts 4.x tick text: round(tickLength + fontSize * 5 / 12).
+    label.style.setProperty('--price-axis-text-inset',Math.round(5+fontSize*5/12)+'px');
+    price.style.fontSize=fontSize+'px';
+    this.buildCountdownRing();
+    const badgeObstacles=(this.paperOverlay?.priceBadgeBounds||[]).filter(b=>b.right>label.offsetLeft&&b.left<label.offsetLeft+label.offsetWidth);
+    const top=ChartEngine.priceLabelTop(y-label.offsetHeight/2,label.offsetHeight,this.plotBottom,[...(this.paperOverlay?.axisLabelBounds||[]),...badgeObstacles]);
+    label.hidden=top===null;
+    if(tail)tail.toggleAttribute('hidden',label.hidden);
+    if(top===null)return;
+    label.style.top=top+'px';
+    this.positionPriceTail(y,top+label.offsetHeight/2);
+  }
+  positionPriceTail(y,centerY){
+    const tail=this.priceTail,label=this.countdownLabel;if(!tail||!label)return;
+    const showLine=this.appearance?.symbolLine?.toLowerCase().includes('line')??true;
+    const timeScale=this.chart.timeScale(),bar=this.bars.at(-1);
+    const x=timeScale.timeToCoordinate(bar.time);
+    const hidden=!showLine||x===null;tail.toggleAttribute('hidden',hidden);if(hidden)return;
+    const width=this.container.clientWidth,height=this.plotBottom,left=label.offsetLeft;
+    tail.setAttribute('width',width);tail.setAttribute('height',height);tail.setAttribute('viewBox',`0 0 ${width} ${height}`);
+    const line=tail.querySelector('.tail-line'),link=tail.querySelector('.tail-link'),dot=tail.querySelector('.tail-dot');
+    // The displaced countdown connector stays in the empty gutter next to the axis.
+    const axisW=this.chart.priceScale('right').width()||44;
+    const axisX=width-axisW-2,displaced=Math.abs(centerY-y)>1;
+    const end=displaced?axisX:left,start=Math.max(0,x+5),show=start<end-6;
+    line.style.display=show?'':'none';
+    if(show){
+      const segments=ChartEngine.priceLineSegments(start,end,y,this.paperOverlay?.priceBadgeBounds||[]);
+      line.setAttribute('d',segments.map(([a,b])=>`M${a} ${y}H${b}`).join(''));
+    }
+    link.style.display=displaced?'':'none';
+    const axisOverlap=(this.paperOverlay?.axisLabelBounds||[]).some(b=>y>=b.top-2&&y<=b.bottom+2);
+    dot.style.display=displaced&&!axisOverlap?'':'none';
+    if(displaced){
+      const edge=centerY>y?label.offsetTop:label.offsetTop+label.offsetHeight;
+      for(const [key,value]of Object.entries({x1:axisX,x2:axisX,y1:y,y2:edge}))link.setAttribute(key,value);
+      dot.setAttribute('cx',axisX);dot.setAttribute('cy',y);
+    }
   }
 
   // MAGNET HELPER (SNAP TO CANDLE OHLC)
-  snapToBar(time,price,mode='strong') {
+  snapToBar(time,price,mode='strong',pixel=null) {
     if(!this.bars?.length||!Number.isFinite(time)||!Number.isFinite(price))return {time,price};
     let lo=0,hi=this.bars.length-1;
     while(lo<hi){const mid=(lo+hi)>>1;if(this.bars[mid].time<time)lo=mid+1;else hi=mid;}
@@ -672,7 +1054,7 @@ class ChartEngine {
     let closest=price,distance=Infinity;
     for(const candidate of [bar.open,bar.high,bar.low,bar.close]){const at=this.series.priceToCoordinate(candidate);if(at===null)continue;const delta=Math.abs(at-y);if(delta<distance){closest=candidate;distance=delta;}}
     if(mode==='weak'){
-      const x=this.chart.timeScale().logicalToCoordinate(DrawingModel.logicalIndex(this,time));
+      const x=pixel?.x??this.chart.timeScale().logicalToCoordinate(DrawingModel.logicalIndex(this,time));
       const barX=this.chart.timeScale().logicalToCoordinate(DrawingModel.logicalIndex(this,bar.time));
       if(x===null||barX===null||Math.hypot(x-barX,distance)>8)return {time,price};
     }
@@ -682,7 +1064,26 @@ class ChartEngine {
   snapToOHLC(time,price){return this.snapToBar(time,price).price;}
 
   // DRAWINGS RENDERING
-  renderDrawings() {
+  renderDrawingsBg(ctx) {
+    if (!ctx || this.appearance?.drawingLayerMode === 'Above candles') return;
+    const rect = this.container.getBoundingClientRect();
+    const rightAxisW = this.chart?.priceScale?.('right')?.width?.() || 65;
+    const drawW = Math.max(0, rect.width - rightAxisW);
+    const drawH = Math.max(0, rect.height - (this.paneHeight || 0) - 26);
+    this._drawMetrics = { axisW: rightAxisW, width: drawW, plotBottom: drawH };
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, drawW, drawH); ctx.clip();
+    const drawings = [...(this.indicatorDrawings || []), ...(this.drawingsHidden ? [] : this.drawings || [])];
+    for (const original of drawings) {
+      const value = this.drawingPreview && original.id && this.drawingPreview.id === original.id ? this.drawingPreview : original;
+      DrawingModel.draw(ctx, this, value, 'bg');
+    }
+    ctx.restore();
+    this._drawMetrics = null;
+  }
+
+  renderDrawings({includePaper=true,fromPrimitive=false}={}) {
+    if (!fromPrimitive && this._requestPrimitiveUpdate) this._requestPrimitiveUpdate();
     this.positionSymbolBadge();
     this.positionCountdown();
     if (!this.overlayCtx) return;
@@ -691,12 +1092,15 @@ class ChartEngine {
     ctx.clearRect(0, 0, rect.width, rect.height);
 
     if(this.appearance)ChartAppearance.draw(this,ctx,rect);
+    this.alertOverlay?.draw(ctx,rect);
+    if(includePaper&&this.paperOverlay)this.paperOverlay.draw(ctx,rect);
+    else if(includePaper) {
     // 1. Render Active Paper Positions (Entry line + Live PnL)
     if (this.appearance?.positions!==false && this.positions && this.positions.length) {
       const currentPrice = this.bars.length ? this.bars[this.bars.length - 1].close : 0;
       for (const pos of this.positions) {
         const y = this.series.priceToCoordinate(pos.price);
-        if (y !== null && y >= 0 && y <= this.plotHeight-26) {
+        if (y !== null && y >= 0 && y <= this.plotBottom) {
           const isBuy = pos.type === 'buy';
           const pnlPoints = isBuy ? (currentPrice - pos.price) : (pos.price - currentPrice);
           const pnlUsd = (pnlPoints * pos.pointValue * pos.qty).toFixed(2);
@@ -717,7 +1121,7 @@ class ChartEngine {
           const badgeX=this.appearance?.alignment==='Right'?Math.max(8,rect.width-250):8;
           ctx.fillRect(badgeX, y - 10, 85, 20);
           ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 10px monospace';
+          ctx.font = 'bold 10px "Trebuchet MS", "Fira Sans", sans-serif';
           ctx.fillText(`${pos.type.toUpperCase()} ${pos.qty} @ ${pos.price.toFixed(2)}`, badgeX+4, y + 4);
 
           // PnL Badge
@@ -730,21 +1134,55 @@ class ChartEngine {
       }
     }
 
-    if(this.appearance?.positions!==false)for(const order of this.pendingOrders||[]){const y=this.series.priceToCoordinate(order.price);if(y!==null&&y>=0&&y<this.plotHeight-26){ctx.strokeStyle='#e6a23c';ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(this.appearance?.extendedLines===false?180:rect.width-65,y);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#e6a23c';ctx.font='11px Arial';ctx.fillText(`${order.type} ${order.side} ${order.qty} @ ${order.price}`,this.appearance?.alignment==='Right'?Math.max(8,rect.width-250):8,y-5);}}
+    if(this.appearance?.positions!==false)for(const order of this.pendingOrders||[]){const y=this.series.priceToCoordinate(order.price);if(y!==null&&y>=0&&y<this.plotBottom){ctx.strokeStyle='#e6a23c';ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(this.appearance?.extendedLines===false?180:rect.width-this.chart.priceScale('right').width(),y);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#e6a23c';ctx.font='11px "Trebuchet MS", "Fira Sans", sans-serif';ctx.fillText(`${order.type} ${order.side} ${order.qty} @ ${order.price}`,this.appearance?.alignment==='Right'?Math.max(8,rect.width-250):8,y-5);}}
+    }
     ctx.save();
-    ctx.beginPath(); ctx.rect(0, 0, Math.max(0, rect.width - 65), Math.max(0, rect.height - (this.paneHeight||0) - 26)); ctx.clip();
+    this.onBeforeRenderDrawings?.();
+    const rightAxisW = this.chart?.priceScale?.('right')?.width?.() || 65;
+    const drawW = Math.max(0, rect.width - rightAxisW);
+    const drawH = Math.max(0, rect.height - (this.paneHeight||0) - 26);
+    this._drawMetrics = { axisW: rightAxisW, width: drawW, plotBottom: drawH };
+    ctx.beginPath(); ctx.rect(0, 0, drawW, drawH); ctx.clip();
+    this._qtSsmtDrawn = [];
+    this._qtTrBoxes = [];
+    this._qtQBoxes = [];
     const drawings = [...(this.indicatorDrawings || []), ...(this.drawingsHidden ? [] : this.drawings || [])];
+    const pass = (this._hasBgPrimitive && this.appearance?.drawingLayerMode !== 'Above candles') ? 'fg' : 'all';
     for (const original of drawings) {
       const value = this.drawingPreview && original.id && this.drawingPreview.id === original.id ? this.drawingPreview : original;
-      DrawingModel.draw(ctx, this, value);
+      DrawingModel.draw(ctx, this, value, pass);
     }
+    this._drawMetrics = null;
     window.drawingMgr?.editor.renderHandles(this, ctx);
     ctx.restore();
   }
 
+  saveSnapshot(){
+    if(!this.overlayCanvas||typeof this.chart.takeScreenshot!=='function')return;
+    const screenshot=this.chart.takeScreenshot(true);
+    const context=screenshot.getContext('2d');
+    if(!context)return;
+    const includePaper=this.appearance?.snapshotOrders!==false;
+    if(!includePaper)this.renderDrawings({includePaper:false});
+    try{
+      context.drawImage(this.overlayCanvas,0,0,screenshot.width,screenshot.width*this.container.clientHeight/this.container.clientWidth);
+    }finally{
+      if(!includePaper)this.renderDrawings();
+    }
+    screenshot.toBlob(blob=>{
+      if(!blob)return;
+      const url=URL.createObjectURL(blob);
+      const link=document.createElement('a');
+      link.href=url;
+      link.download=this.symbol+'-'+this.currentTimeframe+'.png';
+      link.click();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    });
+  }
+
   // COORDINATE HELPERS FOR DRAWING MANAGER
   coordinateToPrice(y) {
-    if(y<0||y>this.plotHeight-26)return null;
+    if(y<0||y>this.plotBottom)return null;
     return this.series.coordinateToPrice(y);
   }
 

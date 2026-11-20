@@ -1,0 +1,8 @@
+Extract this ZIP and run start_terminal.bat.
+Requires Python 3.12+, TradingView Desktop and an internet connection for market data.
+Install dependencies: python -m pip install -r requirements.txt
+Terminal: http://localhost:3020
+WebSocket: 8080; TradingView Desktop CDP: 9222.
+
+Logs and market caches are generated on this computer and are not included.
+Browser settings, drawings and Paper accounts are stored per localhost origin.

@@ -37,3 +37,10 @@ test('countdown honors a native early-close correction',()=>{
  const value=TerminalTime.end(bar(Date.parse('2026-11-27T00:00:00Z')/1000),'D',metadata);
  assert.equal(new Date(value*1000).toISOString(),'2026-11-27T18:15:00.000Z');
 });
+
+test('Replay end message identifies the limiting symbol and loaded time range',()=>{
+ const replay=Object.create(TerminalReplay.prototype),start=Date.parse('2026-11-11T15:00:00Z')/1000;
+ const make=(symbol,n)=>({symbol,currentTimeframe:'1m',metadata:{timezone:'Etc/UTC',session:'24x7'},getBarsForTimeframe:()=>Array.from({length:n},(_,i)=>bar(start+i*60))});
+ replay.targets=[make('NQ1!',10),make('YM1!',3)];const limits=replay.limits(replay.targets);
+ assert.equal(limits.last,start+180);const message=replay.boundaryMessage(1,limits);assert.match(message,/YM1! 1m/);assert.doesNotMatch(message,/NQ1! 1m/);assert.match(message,/2026-11-11 15:03 UTC/);assert.match(message,/Current chart/);
+});

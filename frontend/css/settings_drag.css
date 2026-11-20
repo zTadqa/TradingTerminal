@@ -1,0 +1,6 @@
+/* The header is the drag handle; tabs and controls retain their own hitboxes. */
+:is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) .modal-header,
+#desktop-panel .desktop-panel-header,.companion-panel:not(.music-mini) > header {
+ cursor:grab;touch-action:none;user-select:none;
+}
+.settings-panel-dragging :is(.modal-header,.desktop-panel-header),.companion-panel.settings-panel-dragging > header { cursor:grabbing; }

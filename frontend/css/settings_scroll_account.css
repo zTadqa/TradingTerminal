@@ -1,0 +1,42 @@
+/* One uninterrupted surface while scrolling inside Settings. */
+html body :is(#settings-modal,#qt-settings-modal,.indicator-settings-modal,#drawing-settings) .cs-sub{display:none!important}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-layout{border:0!important;background:transparent!important;overflow:hidden;gap:8px}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-body{border:0!important;outline:0;box-shadow:none!important;background:transparent!important;scrollbar-width:thin;scrollbar-color:var(--line) transparent;scrollbar-gutter:stable;padding:8px 14px 18px;overscroll-behavior:contain}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-body::-webkit-scrollbar{width:6px;height:6px}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-body::-webkit-scrollbar-track{background:transparent;border:0}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-body::-webkit-scrollbar-thumb{background:var(--line);border:0;border-radius:8px}
+html body :is(#settings-modal,#qt-settings-modal) .chart-settings-body::-webkit-scrollbar-button{display:none;width:0;height:0}
+html body #settings-modal.theme-mode .chart-setting-card{background:transparent;border:0;box-shadow:none;padding:0 2px}
+html body #settings-modal .theme-gallery{padding:4px 2px 12px;gap:12px}
+html body :is(#settings-modal,#qt-settings-modal) .modal-footer{position:relative;z-index:2;background:var(--bg);flex:none}
+/* A compact demo-account form, using the active terminal theme. */
+html body #account-modal .demo-account-dialog{width:min(420px,calc(100% - 32px))!important;box-sizing:border-box;overflow:hidden;padding:0;border:1px solid var(--line);border-radius:22px;background:var(--bg);color:var(--text);box-shadow:0 24px 80px color-mix(in srgb,var(--text) 18%,transparent)}
+html body #account-modal .modal-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 24px 18px;border:0;background:transparent}
+html body #account-modal h2{font:650 19px/1.3 var(--font-ui);letter-spacing:-.02em;color:var(--text);margin:0}
+html body #account-modal .modal-close{width:30px;height:30px;flex:none;display:grid;place-items:center;background:var(--glass2);color:var(--muted);border:0;border-radius:50%;font:400 20px/1 var(--font-ui);cursor:pointer}
+html body #account-modal .modal-close:hover{color:var(--text)}
+html body #account-modal .modal-body{display:grid;gap:18px;padding:2px 24px 24px;background:transparent;border:0}
+html body #account-modal .demo-account-field{display:grid;gap:8px;font:500 12px/1.4 var(--font-ui);color:var(--text)}
+html body #account-modal .demo-account-field>span:first-child{display:flex;align-items:center;justify-content:space-between}
+html body #account-modal .demo-account-field small{color:var(--muted);font-size:11px;font-weight:400}
+html body #account-modal .demo-account-field input{width:100%;min-width:0;height:44px;box-sizing:border-box;padding:0 13px;border:1px solid var(--line);border-radius:11px;background:var(--glass2);color:var(--text);font:500 14px/1 var(--font-ui);box-shadow:none}
+html body #account-modal .demo-balance-input{display:flex;align-items:center;gap:8px;height:44px;padding:0 13px;border:1px solid var(--line);border-radius:11px;background:var(--glass2);color:var(--muted)}
+html body #account-modal .demo-balance-input input{height:42px;padding:0;border:0;background:transparent;appearance:textfield;-moz-appearance:textfield}
+#account-modal input::-webkit-inner-spin-button,#account-modal input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+html body #account-modal .demo-account-field input:focus{outline:0;border-color:var(--accent);box-shadow:none}
+html body #account-modal .demo-balance-input:focus-within{border-color:var(--accent)}
+html body #account-modal .demo-balance-input input:focus{outline:0;box-shadow:none}
+html body #account-modal .demo-account-note{margin:0;padding:12px 13px;border-radius:10px;background:var(--glass2);color:var(--muted);font:400 11px/1.6 var(--font-ui)}
+html body #account-modal .modal-footer{display:flex;justify-content:flex-end;gap:8px;margin:0;padding:16px 24px;border-top:1px solid var(--line);background:transparent}
+html body #account-modal .modal-footer button{min-height:38px;padding:0 16px;border-radius:10px;font:600 12px/1 var(--font-ui);cursor:pointer}
+html body #account-modal #cancel-demo-account{background:var(--glass2);color:var(--text);border:1px solid var(--line)}
+html body #account-modal #create-account{background:var(--accent);color:var(--accent-ink);border:1px solid transparent;box-shadow:none}
+html body #account-modal #create-account:hover{filter:brightness(1.06)}
+html body #account-modal button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Match both actions, overriding the older ID-level pill rule. */
+html body #account-modal .modal-footer{align-items:center;gap:10px}
+html body #account-modal :is(#cancel-demo-account,#create-account){display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;height:40px;min-height:40px;max-height:40px;min-width:104px;margin:0;padding:0 18px;border-width:1px;border-style:solid;border-radius:11px;font:600 12px/1 var(--font-ui);letter-spacing:normal;white-space:nowrap;box-shadow:none;transition:background-color .15s ease,border-color .15s ease,color .15s ease}
+html body #account-modal #create-account{border-color:transparent;filter:none}
+html body #account-modal #cancel-demo-account:hover{border-color:var(--muted);background:color-mix(in srgb,var(--text) 8%,var(--bg))}
+html body #account-modal #create-account:hover{background:color-mix(in srgb,var(--accent) 90%,var(--text));border-color:transparent;filter:none}
+body.reduce-motion #account-modal :is(#cancel-demo-account,#create-account){transition:none}

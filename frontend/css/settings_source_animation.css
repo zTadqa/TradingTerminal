@@ -1,0 +1,61 @@
+.qt-tabs{--mx:-200px;position:relative;display:flex;gap:2px;padding:5px;margin-top:2px;border-radius:20px;border:1px solid var(--line);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--text) 5%,transparent),transparent 60%),var(--glass2);
+  box-shadow:inset 0 1px 3px rgba(0,0,0,.18),inset 0 -1px 0 rgba(255,255,255,.04);
+  overflow-x:auto;overflow-y:hidden;scrollbar-width:none;scroll-snap-type:x proximity;overscroll-behavior-x:contain;isolation:isolate}
+.qt-tabs::-webkit-scrollbar{display:none}
+.qt-tabs::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;border-radius:inherit;
+  background:radial-gradient(90px 60px at var(--mx) 50%,color-mix(in srgb,var(--accent) 20%,transparent),transparent 70%);opacity:0;transition:opacity .25s}
+.qt-tabs:hover::before{opacity:1}
+.qt-tab-thumb{position:absolute;z-index:1;left:0;top:5px;bottom:5px;width:0;border-radius:15px;pointer-events:none;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 82%,#fff),var(--accent) 55%,color-mix(in srgb,var(--accent) 86%,#000));
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 70%,#000),0 6px 18px color-mix(in srgb,var(--accent) 45%,transparent),0 0 28px color-mix(in srgb,var(--accent) 28%,transparent),inset 0 1px 0 rgba(255,255,255,.45);
+  transition:transform .5s cubic-bezier(.3,1.35,.4,1),width .5s cubic-bezier(.3,1.35,.4,1),opacity .25s}
+.qt-tab-thumb::after{content:"";position:absolute;inset:0;border-radius:inherit;background:linear-gradient(105deg,transparent 35%,rgba(255,255,255,.35) 50%,transparent 65%);background-size:250% 100%;background-position:130% 0;animation:qt-sheen 3.6s ease-in-out 1.2s infinite}
+@keyframes qt-sheen{0%,70%,100%{background-position:130% 0}85%{background-position:-30% 0}}
+.qt-tab{position:relative;z-index:2;flex:1 1 auto;min-width:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:38px;padding:0 10px;border:0!important;border-radius:15px!important;
+  background:transparent!important;color:var(--muted)!important;font:inherit;font-size:12px;font-weight:650;letter-spacing:.005em;white-space:nowrap;cursor:pointer;scroll-snap-align:center;
+  transition:color .25s,transform .2s cubic-bezier(.3,1.4,.5,1);-webkit-tap-highlight-color:transparent}
+.qt-tab:hover{color:var(--text)!important}
+.qt-tab:active{transform:scale(.95)}
+.qt-tab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.qt-tab-ico{flex:none;transition:transform .45s cubic-bezier(.3,1.6,.4,1)}
+.qt-tab:hover .qt-tab-ico{transform:translateY(-1px) scale(1.12)}
+.qt-tab.active{color:var(--accent-ink)!important}
+.qt-tab.active .qt-tab-ico{transform:scale(1.12) rotate(-6deg)}
+.qt-tab-count{font-style:normal;font-size:10.5px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;padding:3px 6px;border-radius:99px;
+  background:color-mix(in srgb,var(--text) 9%,transparent);color:var(--muted);transition:background .25s,color .25s}
+.qt-tab:not(.active) .qt-tab-count{display:none}
+.qt-tab.active .qt-tab-count{background:color-mix(in srgb,var(--accent-ink) 22%,transparent);color:var(--accent-ink)}
+
+/* Keep the supplied compact fallback inside a narrow settings panel. */
+#qt-settings-modal .qt-tabs{margin:0 14px;flex:none;min-height:50px;box-sizing:border-box}
+#qt-settings-modal .qt-tab{flex:1 0 auto}
+#qt-settings-modal .qt-tab:not(.active) .qt-tab-label{display:none}
+#qt-settings-modal .qt-tab.active{box-shadow:none!important}
+body.reduce-motion #qt-settings-modal :is(.qt-tab-thumb,.qt-tab,.qt-tab-ico){transition:none!important;transform:none}
+body.reduce-motion #qt-settings-modal .qt-tab-thumb::after{animation:none}
+body.reduce-motion #qt-settings-modal .qt-tab-thumb{transform:var(--qt-selected-transform)!important}
+
+html body #settings-modal .chart-settings-nav{--nav-dur:460ms;--nav-ease:var(--dock-reveal-ease,cubic-bezier(.3,.65,.3,1));justify-content:flex-start;gap:2px}
+html body #settings-modal .chart-settings-nav button{transition:background-color .25s,color .25s,box-shadow .35s}
+html body #settings-modal .chart-settings-nav .chart-tab-label{display:grid;width:auto;grid-template-columns:0fr;transition:grid-template-columns var(--nav-dur) var(--nav-ease)}
+html body #settings-modal .chart-settings-nav button[aria-selected=true] .chart-tab-label{width:auto;grid-template-columns:1fr}
+html body #settings-modal .chart-settings-nav .chart-tab-label>span{display:block;min-width:0;overflow:hidden;padding-left:0;opacity:0;transition:padding-left var(--nav-dur) var(--nav-ease),opacity .2s ease}
+html body #settings-modal .chart-settings-nav button[aria-selected=true] .chart-tab-label>span{padding-left:9px;opacity:1;transition:padding-left var(--nav-dur) var(--nav-ease),opacity .3s ease .1s}
+html body.reduce-motion #settings-modal .chart-settings-nav :is(button,span){transition:none!important}
+
+/* Size both rails to their actual tabs, with only the shared 5px inset. */
+html body :is(#settings-modal .chart-settings-nav,#qt-settings-modal .qt-tabs){width:max-content;max-width:calc(100% - 28px);align-self:flex-start;flex:none;justify-content:flex-start;box-sizing:border-box}
+html body #qt-settings-modal .qt-tabs .qt-tab{flex:none}
+/* Use the same expanding-label navigation on both settings panels. */
+html body #qt-settings-modal .qt-settings-reveal{--nav-dur:460ms;--nav-ease:var(--dock-reveal-ease,cubic-bezier(.3,.65,.3,1));gap:2px;padding:5px;min-height:50px}
+html body #qt-settings-modal .qt-settings-reveal .qt-tab-thumb{display:none}
+html body #qt-settings-modal .qt-settings-reveal .qt-tab{display:flex;flex:none;gap:0;height:40px;min-width:40px;padding:0 11px;color:var(--muted)!important;transform:none!important;transition:background-color .25s,color .25s,box-shadow .35s}
+html body #qt-settings-modal .qt-settings-reveal .qt-tab.active{background:var(--accent)!important;color:var(--accent-ink)!important;box-shadow:0 6px 16px -8px var(--accent)!important}
+html body #qt-settings-modal .qt-settings-reveal .qt-tab-ico{width:18px;height:18px;transform:none!important}
+html body #qt-settings-modal .qt-settings-reveal .qt-tab-label{display:block!important}
+html body #qt-settings-modal .qt-settings-reveal .chart-tab-label{display:grid;width:auto;grid-template-columns:0fr;transition:grid-template-columns var(--nav-dur) var(--nav-ease)}
+html body #qt-settings-modal .qt-settings-reveal .qt-tab.active .chart-tab-label{width:auto;grid-template-columns:1fr}
+html body #qt-settings-modal .qt-settings-reveal .chart-tab-label>span{min-width:0;overflow:hidden;padding-left:0;opacity:0;transition:padding-left var(--nav-dur) var(--nav-ease),opacity .2s ease}
+html body #qt-settings-modal .qt-settings-reveal .qt-tab.active .chart-tab-label>span{padding-left:9px;opacity:1;transition:padding-left var(--nav-dur) var(--nav-ease),opacity .3s ease .1s}
+html body.reduce-motion #qt-settings-modal .qt-settings-reveal :is(button,span){transition:none!important}

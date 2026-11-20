@@ -1,0 +1,35 @@
+/* Reserve the revealed dock's full lane at every viewport width and toolbar scale. */
+#desktop-panel:is([data-mode="objects"],[data-mode="alerts"],[data-mode="watch"]) {
+  right: calc(24px + 52px * var(--toolbar-scale,1) + var(--panel-paper-offset,0px)) !important;
+  width: min(352px,calc(100vw - 100px - var(--panel-paper-offset,0px))) !important;
+  min-width: 0 !important;
+  max-width: calc(100vw - 36px - 52px * var(--toolbar-scale,1) - var(--panel-paper-offset,0px)) !important;
+  z-index: 200 !important;
+  background: var(--bg) !important; color: var(--text); border-color: var(--line) !important;
+  transition: none !important;
+}
+/* The two surfaces have separate screen space, including while the dock animates. */
+body:has(#desktop-panel:not([hidden])) .edge-panel-dock { z-index: 199 !important; }
+#desktop-panel[data-mode="objects"] .object-row {
+  min-height: 40px; padding: 5px 6px; gap: 6px; border: 1px solid transparent;
+  border-radius: 10px; background: transparent !important; margin: 3px 0;
+}
+#desktop-panel[data-mode="objects"] .object-row:is(:hover,:focus-within) {
+  background: var(--glass2) !important; border-color: var(--line);
+}
+#desktop-panel[data-mode="objects"] .object-row button {
+  min-width: 0; color: var(--text); border-radius: 7px; background: transparent !important;
+}
+#desktop-panel[data-mode="objects"] .object-row button:first-child {
+  font-size: 12px; line-height: 1.5; font-weight: 500;
+}
+#desktop-panel[data-mode="objects"] .object-row button:not(:first-child) {
+  width: 28px; height: 28px; padding: 5px; display: inline-flex; align-items: center; justify-content: center;
+}
+#desktop-panel[data-mode="objects"] .object-row button:hover { background: var(--glass2) !important; }
+#desktop-panel[data-mode="objects"] .object-row button.active { color: var(--accent); }
+#desktop-panel[data-mode="objects"] .object-row svg { width: 16px; height: 16px; flex: none; }
+#desktop-panel[data-mode="objects"] .desktop-panel-tabs button { background: transparent !important; color: var(--muted) !important; }
+#desktop-panel[data-mode="objects"] .desktop-panel-tabs button[aria-selected="true"] {
+  background: var(--accent) !important; color: var(--trade-buy-ink,var(--accent-ink)) !important;
+}

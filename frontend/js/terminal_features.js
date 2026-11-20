@@ -58,15 +58,24 @@ class TerminalReplay {
       parent.appendChild(element);
       return element;
     };
+    const icon=path=>'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="'+path+'"/></svg>';
+    const progress=document.createElement('div');progress.className='replay-progress';progress.setAttribute('aria-hidden','true');
+    const badge=document.createElement('span');badge.className='replay-badge';badge.setAttribute('aria-hidden','true');badge.innerHTML='<i></i><span>REPLAY</span>';
+    const separator=()=>{const node=document.createElement('i');node.className='rp-sep';node.setAttribute('aria-hidden','true');this.bar.appendChild(node);};
+    this.bar.append(progress,badge);separator();
     const saved=Workspace.read('terminal_replay_session_v2',{})||{};
-    this.selectBar=button(this.bar,'Select bar',()=>this.selecting?this.clearSelection():this.pickBar());
+    this.selectBar=button(this.bar,ui('Select bar'),()=>this.selecting?this.clearSelection():this.pickBar());
+    this.selectBar.className='replay-select-bar';
+    this.selectBar.innerHTML=icon('M12 3v5M12 16v5M3 12h5M16 12h5')+'<span>'+ui('Select bar')+'</span>';
     this.selectBar.setAttribute('aria-pressed','false');
     const options=document.createElement('details');
     options.className='replay-options';
-    options.innerHTML='<summary aria-label="Replay options" title="Replay options">⌄</summary><div class="replay-options-menu"></div>';
+    options.innerHTML='<summary aria-label="Replay options" title="Replay options">'+icon('m7 10 5 5 5-5')+'</summary><div class="replay-options-menu"></div>';
     this.bar.appendChild(options);
     this.options=options;
     const menu=options.lastElementChild;
+    const caption=text=>{const node=document.createElement('span');node.className='rp-cap';node.textContent=ui(text);menu.appendChild(node);};
+    caption('Scope');
     this.scope=document.createElement('select');
     this.scope.setAttribute('aria-label','Replay scope');
     this.scope.add(new Option('All charts','all'));
@@ -79,6 +88,7 @@ class TerminalReplay {
       this.pickBar();
     };
     menu.appendChild(this.scope);
+    caption('Date / Time (UTC)');
     this.date=document.createElement('input');
     this.date.type='datetime-local';
     this.date.step='1';
@@ -87,21 +97,34 @@ class TerminalReplay {
     button(menu,'Go (UTC)',()=>this.go(Date.parse(this.date.value+'Z')/1000));
     button(menu,'Random',()=>this.startDefault(true));
     button(menu,'◀ Previous',()=>this.step(-1));
-    this.play=button(this.bar,'▶ Play',()=>this.toggle());
-    button(this.bar,'▶|',()=>this.step(1)).setAttribute('aria-label','Next bar');
+    separator();
+    const previous=button(this.bar,'',()=>this.step(-1));
+    previous.innerHTML=icon('m18 5-10 7 10 7zM5 5v14');
+    previous.setAttribute('aria-label','Previous bar');previous.title='Previous bar (Alt + Left)';
+    this.play=button(this.bar,ui('Play'),()=>this.toggle());
+    this.play.className='replay-play';
+    this.play.dataset.playing='false';this.play.setAttribute('aria-label',ui('Play'));this.play.title='Play / Pause (Space)';
+    const next=button(this.bar,'',()=>this.step(1));
+    next.innerHTML=icon('m6 5 10 7-10 7zM19 5v14');
+    next.setAttribute('aria-label','Next bar');
+    next.title='Next bar';
     this.speed=document.createElement('select');
     this.speed.setAttribute('aria-label','Replay speed');
     for(const n of [.5,1,2,5,10])this.speed.add(new Option(n+'×',n));
     this.speed.value=[.5,1,2,5,10].includes(+saved.speed)?String(saved.speed):'1';
     this.speed.onchange=()=>{if(this.timer){this.pause();this.toggle();}this.persist();};
     this.bar.appendChild(this.speed);
+    separator();
     this.timeframe=document.createElement('span');
     this.timeframe.className='replay-timeframe';
     this.bar.appendChild(this.timeframe);
     this.position=document.createElement('time');
     this.position.id='replay-position';
     this.bar.appendChild(this.position);
-    button(this.bar,'×',()=>this.stop()).setAttribute('aria-label','Exit Replay');
+    const exit=button(this.bar,'',()=>this.stop());
+    exit.innerHTML=icon('m6 6 12 12M18 6 6 18');
+    exit.setAttribute('aria-label','Exit Replay');
+    exit.title='Exit Replay';
     document.getElementById('btn-replay').onclick=()=>this.bar.classList.contains('show')?this.stop():this.start();
     document.addEventListener('pointerdown',event=>{
       if(options.open&&!options.contains(event.target))options.open=false;
@@ -136,20 +159,27 @@ class TerminalReplay {
     return this.scope.value==='all'?this.getCharts():[this.getActive()];
   }
   bars(chart){return chart.getBarsForTimeframe(chart.currentTimeframe);}
-  end(chart,bar){return TerminalTime.end(bar,chart.currentTimeframe,chart.metadata);}
+  end(chart,bar){return TerminalTime.end(bar,chart.currentTimeframe,chart.displaySessionMetadata?.()||chart.metadata);}
   limits(charts){
     const now=Date.now()/1000;
     let first=-Infinity,last=now;
     for(const chart of charts){
       const bars=this.bars(chart);
-      const count=TerminalTime.closedIndex(bars,chart.currentTimeframe,chart.metadata,now);
+      const count=TerminalTime.closedIndex(bars,chart.currentTimeframe,chart.displaySessionMetadata?.()||chart.metadata,now);
       if(!count)return null;
       first=Math.max(first,this.end(chart,bars[0]));
       last=Math.min(last,this.end(chart,bars[count-1]));
     }
     return charts.length&&Number.isFinite(first)&&first<=last?{first,last}:null;
   }
-  updateTimeframe(){this.timeframe.textContent=this.getActive()?.currentTimeframe||'';}
+  boundaryMessage(direction,limits){
+    if(!limits)return 'Các chart không còn khoảng dữ liệu chung. Chọn Current chart để Replay riêng.';
+    const edge=direction<0?limits.first:limits.last;
+    const format=time=>new Date(time*1000).toISOString().replace('T',' ').slice(0,16)+' UTC';
+    const blockers=this.targets.filter(chart=>{const bars=this.bars(chart),count=TerminalTime.closedIndex(bars,chart.currentTimeframe,chart.displaySessionMetadata?.()||chart.metadata,Date.now()/1000);return count&&this.end(chart,bars[direction<0?0:count-1])===edge;});
+    return `Đã ${direction<0?'tới đầu':'hết nến đã tải'}: ${blockers.map(c=>c.symbol+' '+c.currentTimeframe).join(', ')||'các chart'} · ${format(edge)}. Phạm vi chung: ${format(limits.first)} → ${format(limits.last)}. Có đủ khung không có nghĩa đã tải hết lịch sử; chọn Current chart để phát riêng.`;
+  }
+  updateTimeframe(){const active=this.getActive();this.timeframe.textContent=active?[active.symbol,active.currentTimeframe].filter(Boolean).join(' · '):'';}
   start(){
     this.bar.classList.add('show');
     this.updateTimeframe();
@@ -217,8 +247,8 @@ class TerminalReplay {
     const active=this.getActive();
     const chart=targets.includes(active)?active:targets[0];
     const bars=this.bars(chart);
-    const from=TerminalTime.closedIndex(bars,chart.currentTimeframe,chart.metadata,limits.first-.001);
-    const to=TerminalTime.closedIndex(bars,chart.currentTimeframe,chart.metadata,limits.last);
+    const from=TerminalTime.closedIndex(bars,chart.currentTimeframe,chart.displaySessionMetadata?.()||chart.metadata,limits.first-.001);
+    const to=TerminalTime.closedIndex(bars,chart.currentTimeframe,chart.displaySessionMetadata?.()||chart.metadata,limits.last);
     const index=random?from+Math.floor(Math.random()*Math.max(1,to-from-1)):Math.max(from,to-26);
     const clock=this.end(chart,bars[index]);
     return this.go(clock>=limits.first&&clock<=limits.last?clock:limits.first,true,targets);
@@ -248,12 +278,17 @@ class TerminalReplay {
     const result={};for(const [symbol,data] of cache){const filtered={metadata:data.metadata};for(const [tf,bars] of Object.entries(data)){if(Array.isArray(bars)&&MarketData.durations[tf])filtered[tf]=bars.slice(0,TerminalTime.closedIndex(bars,tf,data.metadata,this.clock));}result[symbol]=filtered;}
     this.marketKey=key;return this.marketCache=result;
   }
-  pause(){clearInterval(this.timer);this.timer=null;this.play.textContent='▶ Play';}
+  updatePlayButton(playing) {
+    this.play.dataset.playing=String(playing);
+    this.play.textContent=ui(playing?'Pause':'Play');
+    this.play.setAttribute('aria-label',ui(playing?'Pause':'Play'));
+  }
+  pause(){clearInterval(this.timer);this.timer=null;this.updatePlayButton(false);}
   toggle(){
     if(this.timer){this.pause();return;}
     if(!this.running&&!this.startDefault())return;
     this.clearSelection();
-    this.play.textContent='Ⅱ Pause';
+    this.updatePlayButton(true);
     this.timer=setInterval(()=>this.step(1,false),1000/Number(this.speed.value));
   }
   step(direction,pause=true){
@@ -264,13 +299,13 @@ class TerminalReplay {
     const limits=this.limits(this.targets);
     const times=this.targets.map(chart=>{
       const bars=this.bars(chart);
-      const index=TerminalTime.closedIndex(bars,chart.currentTimeframe,chart.metadata,this.clock-(direction<0?.001:0));
+      const index=TerminalTime.closedIndex(bars,chart.currentTimeframe,chart.displaySessionMetadata?.()||chart.metadata,this.clock-(direction<0?.001:0));
       return this.end(chart,bars[direction>0?index:index-1]);
     }).filter(Number.isFinite);
     const next=direction>0?Math.min(...times):Math.max(...times);
     if(!limits||!Number.isFinite(next)||next<limits.first||next>limits.last||next===this.clock){
       this.pause();
-      this.toast('Đã tới giới hạn dữ liệu chung của Replay');
+      this.toast(this.boundaryMessage(direction,limits),'alert');
       return;
     }
     this.clock=next;
@@ -296,6 +331,10 @@ class TerminalReplay {
     if(document.activeElement!==this.date)this.date.value=new Date(this.clock*1000).toISOString().slice(0,19);
     this.position.dateTime=new Date(this.clock*1000).toISOString();
     this.position.textContent=this.position.dateTime.slice(11,19)+' UTC';
+    const limits=this.limits(this.targets);
+    this.bar.style.setProperty('--p',(limits?Math.max(0,Math.min(100,100*(this.clock-limits.first)/Math.max(1,limits.last-limits.first))):0)+'%');
+    if(limits)this.position.title='Dữ liệu chung đã tải: '+new Date(limits.first*1000).toISOString()+' → '+new Date(limits.last*1000).toISOString();
+    this.onChange?.(this);
   }
   persist(){
     if(this.running)Workspace.write('terminal_replay_session_v2',{
@@ -318,7 +357,9 @@ class TerminalReplay {
     for(const chart of this.targets)if(chart.replayMode)this.restoreChart(chart);
     this.targets=[];
     this.position.textContent='';
+    this.bar.style.setProperty('--p','0%');
     if(close){this.bar.classList.remove('show');this.options.open=false;}
+    this.onChange?.(this);
   }
 }
 
@@ -329,53 +370,76 @@ class TerminalFeatures{
     $('btn-sync').hidden=true;$('btn-sync').style.display='none';$('btn-settings').hidden=false;
     $('btn-layout').querySelector('span')?.remove();$('btn-layout').setAttribute('aria-label','Layout and synchronization');
     const pop=$('layout-popover');pop.querySelectorAll('.layout-row').forEach(n=>n.remove());
-    const layouts=document.createElement('div');layouts.className='complete-layouts';pop.prepend(layouts);
+    const layouts=document.createElement('section');
+    layouts.className='complete-layouts';
+    const layoutHeading=document.createElement('h2');
+    layoutHeading.textContent=ui('Chart layout');
+    layouts.appendChild(layoutHeading);
+    pop.prepend(layouts);
     const saved=Workspace.read('terminal_layout_v2',{count:3,columns:3});
-    for(let count=1;count<=16;count++){
+    for(let count=1;count<=3;count++){
       const row=document.createElement('div');row.className='layout-row';const number=document.createElement('span');number.textContent=count;number.className='layout-row-num';row.appendChild(number);
-      const choices=[...new Set([count,1,Math.ceil(Math.sqrt(count)),Math.ceil(count/2)])];
+      const choices=count===1?[1]:[count,1];
       for(const columns of choices){const button=document.createElement('button');button.type='button';button.className='layout-choice';button.title=`${count} charts · ${columns} columns`;button.setAttribute('aria-label',button.title);
+        button.dataset.layoutKey=`${count}:${columns}`;
         const rows=Math.ceil(count/columns);let rects='';for(let i=0;i<count;i++)rects+=`<rect x="${2+i%columns*24/columns}" y="${2+Math.floor(i/columns)*24/rows}" width="${24/columns-1}" height="${24/rows-1}"/>`;
         button.innerHTML=`<svg viewBox="0 0 28 28" aria-hidden="true">${rects}</svg>`;button.onclick=()=>{this.layout(count,columns);pop.classList.remove('show');};row.appendChild(button);}
       if(count>=3){
         const patterns=[[1,count-1],[count-1,1]];
-        if(count===4)patterns.push([1,1,2],[2,1,1]);
-        if(count===5)patterns.push([1,2,2],[2,2,1]);
-        if(count>=5)patterns.push([2,count-2],[count-2,2]);
-        for(const groups of patterns)for(const axis of ['row','column']){
+        for(const axis of ['column','row'])for(const groups of patterns){
           const b=document.createElement('button');b.type='button';b.className='layout-choice';b.title=`${count} charts · ${axis} ${groups.join('+')}`;b.setAttribute('aria-label',b.title);let rects='';
           groups.forEach((size,g)=>{for(let j=0;j<size;j++){const x=axis==='row'?j/size:g/groups.length,y=axis==='row'?g/groups.length:j/size,w=axis==='row'?1/size:1/groups.length,h=axis==='row'?1/groups.length:1/size;rects+=`<rect x="${2+x*24}" y="${2+y*24}" width="${w*24-1}" height="${h*24-1}"/>`;}});
+          b.dataset.layoutKey=`${count}:${axis}:${groups.join(',')}`;
           b.innerHTML=`<svg viewBox="0 0 28 28" aria-hidden="true">${rects}</svg>`;b.onclick=()=>{this.layout(count,1,true,{groups,axis});pop.classList.remove('show');};row.appendChild(b);
         }
       }
       layouts.appendChild(row);
     }
-    const settings=document.createElement('section');settings.className='layout-sync-settings';settings.innerHTML='<p>SYNC IN LAYOUT</p>';
+    const settings=document.createElement('section');
+    settings.className='layout-sync-settings';
+    const syncHeading=document.createElement('h2');
+    syncHeading.textContent=ui('Sync in layout');
+    settings.appendChild(syncHeading);
     for(const [key,label] of Object.entries({symbol:'Symbol',interval:'Interval',crosshair:'Crosshair',time:'Time',dateRange:'Date range'})){
-      const row=document.createElement('label');const caption=document.createElement('span');caption.textContent=label;const info=document.createElement('span');info.className='sync-info';info.textContent='i';info.title={symbol:'Use the same symbol on all charts',interval:'Use the same timeframe on all charts',crosshair:'Show the crosshair at the same time on all charts',time:'Synchronize the visible time position',dateRange:'Synchronize the visible date range'}[key];caption.append(' ',info);row.appendChild(caption);const input=document.createElement('input');input.type='checkbox';input.setAttribute('role','switch');input.checked=this.sync.options[key];input.setAttribute('aria-label','Sync '+label);input.onchange=()=>{this.sync.options[key]=input.checked;Workspace.write('terminal_sync_options_v1',this.sync.options);};row.appendChild(input);settings.appendChild(row);
+      const row=document.createElement('label');const caption=document.createElement('span');caption.textContent=ui(label);const info=document.createElement('span');info.className='sync-info';info.textContent='i';info.tabIndex=0;info.setAttribute('role','button');info.setAttribute('aria-label','About '+label+' sync');info.dataset.help={symbol:'When you change the symbol on one chart, apply the same symbol to the other charts.',interval:'When you change the timeframe on one chart, apply the same timeframe to the other charts.',crosshair:'Move the crosshair on one chart to show the same timestamp on the other charts.',time:'Scroll the other charts to the same time position while keeping their current zoom.',dateRange:'Keep the same visible start and end dates on the other charts when scrolling or zooming.'}[key];caption.append(' ',info);row.appendChild(caption);const input=document.createElement('input');input.type='checkbox';input.setAttribute('role','switch');input.checked=this.sync.options[key];input.setAttribute('aria-label','Sync '+label);input.onchange=()=>{this.sync.options[key]=input.checked;Workspace.write('terminal_sync_options_v1',this.sync.options);};row.appendChild(input);settings.appendChild(row);
     }
     document.body.classList.toggle('icon-labels-only',Workspace.read('terminal_compact_labels_v1',false));pop.appendChild(settings);
     for(const button of document.querySelectorAll('.topbar-left button,.topbar-right button')){
-      if(button.classList.contains('tf-btn')||button.id==='btn-layout'||button.id==='btn-sync')continue;
+      if(button.closest('#timeframe-menu')||button.classList.contains('tf-btn')||button.id==='btn-layout'||button.id==='btn-sync'||button.id==='reload-chart-data'||button.id==='clock-settings-trigger'||button.id==='live-tz'||button.closest('#clock-timezone-menu')||button.id==='btn-indicator')continue;
       const text=button.textContent.trim(),label=/[a-zA-ZÀ-ỹ]/.test(text)?text:button.getAttribute('aria-label')||button.title||text;if(!label)continue;
       if(!button.querySelector('svg'))button.prepend(this.icon(button.id||(button.classList.contains('toolbar-more')?'more':'')));
       for(const node of [...button.childNodes])if(node.nodeType===3){const span=document.createElement('span');span.textContent=node.textContent;node.replaceWith(span);}
       button.dataset.label=label;button.setAttribute('aria-label',label);
     }
-    const cursor=document.querySelector('[data-tool="crosshair"]');if(cursor)cursor.innerHTML='<svg class="tt-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20M2 12h20" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
+    const cursor=document.querySelector('[data-tool="crosshair"]');if(cursor)cursor.innerHTML=TerminalIcons.svg('crosshair');
     this.installFavorites();
     this.installPolish();
     this.companions=new TerminalCompanions({getReplay:this.getReplay,getActive:this.getActive});
     const sensor=document.createElement('div');sensor.id='fullscreen-timeframe';const group=document.querySelector('.timeframe-group'),anchor=document.createComment('timeframe-home');group.before(anchor);document.body.appendChild(sensor);
-    document.addEventListener('fullscreenchange',()=>{const full=!!document.fullscreenElement;document.body.classList.toggle('terminal-fullscreen',full);if(full){sensor.appendChild(group);sensor.hidden=false;}else{anchor.after(group);sensor.hidden=true;}document.querySelectorAll('.toolbar-overflow').forEach(n=>n.hidden=true);});sensor.hidden=true;
-    this.layout(Math.min(16,Math.max(1,saved.count||3)),Math.max(1,saved.columns||3),false,saved.shape||null);
+    sensor.hidden=true;
+    document.addEventListener('fullscreenchange',()=>{
+      const full=!!document.fullscreenElement;
+      document.body.classList.toggle('terminal-fullscreen',full);
+      if(full)sensor.appendChild(group);
+      else anchor.after(group);
+      sensor.hidden=!full;
+      const favouritesHome=full?document.body:document.getElementById('left-sidebar');
+      favouritesHome.appendChild(this.favoriteBar);
+      document.getElementById('favorite-tool-menu').hidden=true;
+      this.favoriteBar.querySelector('[data-manage-favourites]')?.setAttribute('aria-expanded','false');
+      document.querySelectorAll('.toolbar-overflow').forEach(menu=>menu.hidden=true);
+    });
+    const restoredCount=Math.min(3,Math.max(1,saved.count||3));
+    this.layout(restoredCount,saved.count>3?3:Math.min(restoredCount,Math.max(1,saved.columns||3)),false,saved.count>3?null:saved.shape||null);
     for(const c of this.charts){c.appearance.countdown=true;c.updateCountdown();}
     window.addEventListener('resize',()=>this.clampFavorites());
   }
-  icon(name){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.classList.add('tt-icon');const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',name==='more'?'M4 12h.1M12 12h.1M20 12h.1':name==='btn-indicator-settings'?'M4 7h16M4 17h16M9 4v6M15 14v6':name?.includes('redo')?'M4 12h16m-6-6 6 6-6 6':'M20 12H4m6-6-6 6 6 6');path.setAttribute('fill','none');path.setAttribute('stroke','currentColor');path.setAttribute('stroke-width',name==='more'?'3':'1.6');path.setAttribute('stroke-linecap','round');svg.appendChild(path);return svg;}
+  icon(name){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.classList.add('tt-icon');const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',name==='more'?'M4 12h.1M12 12h.1M20 12h.1':name==='btn-indicator-settings'?'M4 8h6.8m4.4 0H20M4 16h2.8m4.4 0H20M10.8 8a2.2 2.2 0 1 0 4.4 0 2.2 2.2 0 1 0-4.4 0M6.8 16a2.2 2.2 0 1 0 4.4 0 2.2 2.2 0 1 0-4.4 0':name?.includes('redo')?'M4 12h16m-6-6 6 6-6 6':'M20 12H4m6-6-6 6 6 6');path.setAttribute('fill','none');path.setAttribute('stroke','currentColor');path.setAttribute('stroke-width',name==='more'?'3':'1.6');path.setAttribute('stroke-linecap','round');svg.appendChild(path);return svg;}
   visibleCharts(){return this.charts.slice(0,this.count);}
   layout(count,columns,persist=true,shape=null){
     if(!shape&&count>columns&&count%columns)shape={axis:'row',groups:Array.from({length:Math.ceil(count/columns)},(_,i)=>Math.min(columns,count-i*columns))};
+    const selectedKey=shape?`${count}:${shape.axis}:${shape.groups.join(',')}`:`${count}:${columns}`;
+    document.querySelectorAll('.layout-choice').forEach(button=>{const active=button.dataset.layoutKey===selectedKey;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});
     this.count=count;const grid=document.getElementById('chart-grid');grid.className='terminal-layout';grid.style.display='grid';grid.style.gridTemplateColumns=`repeat(${columns},minmax(0,1fr))`;grid.style.gridTemplateRows=`repeat(${Math.ceil(count/columns)},minmax(0,1fr))`;delete grid.dataset.expanded;
     const replay=this.getReplay?.();
     if(replay?.selecting)replay.clearSelection();
@@ -400,25 +464,78 @@ class TerminalFeatures{
   }
   installFavorites(){
     this.favorites=Workspace.read('terminal_drawing_favorites_v1',[]);if(!Array.isArray(this.favorites))this.favorites=[];
-    const bar=document.createElement('div');bar.id='drawing-favorites';bar.setAttribute('aria-label','Favorite drawing tools');this.favoriteBar=bar;document.body.appendChild(bar);
+    const bar=document.createElement('div');bar.id='drawing-favorites';bar.setAttribute('role','toolbar');bar.setAttribute('aria-label','Favorite drawing tools');this.favoriteBar=bar;document.getElementById('left-sidebar').appendChild(bar);
     const draw=()=>{document.querySelectorAll('#left-sidebar .favorite-star').forEach(star=>{
       const selected=this.favorites.includes(star.previousElementSibling?.dataset.tool);
       star.textContent=selected?'★':'☆';
       star.setAttribute('aria-pressed',String(selected));
       star.title=selected?'Remove from Favourites':'Add to Favourites';
-    });bar.replaceChildren();const handle=document.createElement('button');handle.className='favorite-handle';handle.textContent='⠿';handle.title='Drag favorite tools';handle.setAttribute('aria-label',handle.title);bar.appendChild(handle);this.draggable(handle,bar);handle.onclick=()=>{if(this.justDragged)return;menu.replaceChildren();for(const direction of ['Horizontal','Vertical']){const b=document.createElement('button');b.textContent=direction;b.onclick=()=>{bar.dataset.orientation=direction.toLowerCase();Workspace.write('terminal_favorites_orientation_v1',bar.dataset.orientation);menu.hidden=true;this.clampFavorites();};menu.appendChild(b);}const r=handle.getBoundingClientRect();menu.style.left=Math.min(innerWidth-180,r.left)+'px';menu.style.top=Math.min(innerHeight-90,r.bottom+5)+'px';menu.hidden=false;};
-      const manage=document.createElement('button');manage.textContent='☆';manage.className='tool-btn';manage.title='Manage favourite drawing tools';manage.setAttribute('aria-label',manage.title);manage.onclick=()=>this.openFavorites(manage.getBoundingClientRect());bar.appendChild(manage);
+    });bar.replaceChildren();
+      const manage=document.createElement('button');manage.type='button';manage.textContent='☆';manage.className='tool-btn';manage.dataset.manageFavourites='true';manage.setAttribute('aria-label','Manage favourite drawing tools');manage.setAttribute('aria-controls','favorite-tool-menu');manage.setAttribute('aria-expanded',String(!menu.hidden));manage.onclick=()=>menu.hidden?this.openFavorites(manage.getBoundingClientRect()):closeMenu();bar.appendChild(manage);
       for(const key of this.favorites){const original=document.querySelector(`#left-sidebar [data-tool="${CSS.escape(key)}"]`);if(!original)continue;const b=original.cloneNode(true);b.removeAttribute('id');b.querySelector('.favorite-star')?.remove();b.onclick=()=>this.drawing.setTool(key);b.oncontextmenu=e=>{e.preventDefault();this.favorites=this.favorites.filter(x=>x!==key);Workspace.write('terminal_drawing_favorites_v1',this.favorites);draw();};bar.appendChild(b);}bar.hidden=false;this.clampFavorites();};
-    this.renderFavorites=draw;bar.dataset.orientation=Workspace.read('terminal_favorites_orientation_v1','horizontal');
-    const menu=document.createElement('div');menu.id='favorite-tool-menu';menu.hidden=true;document.body.appendChild(menu);
-    this.openFavorites=rect=>{menu.replaceChildren();for(const tool of document.querySelectorAll('#left-sidebar [data-tool]')){const key=tool.dataset.tool;if(['trash','lock','hide','eye','magnet'].includes(key))continue;const label=document.createElement('label');label.textContent=tool.title||tool.getAttribute('aria-label')||key;const input=document.createElement('input');input.type='checkbox';input.checked=this.favorites.includes(key);input.setAttribute('aria-label','Favourite '+label.textContent);input.onchange=()=>{this.favorites=input.checked?[...new Set([...this.favorites,key])]:this.favorites.filter(k=>k!==key);Workspace.write('terminal_drawing_favorites_v1',this.favorites);draw();};label.prepend(input);menu.appendChild(label);}menu.style.left=Math.max(0,Math.min(innerWidth-230,rect.left))+'px';menu.style.top=Math.max(0,Math.min(innerHeight-320,rect.bottom+4))+'px';menu.hidden=false;};
+    this.renderFavorites=draw;bar.dataset.orientation='vertical';
+    const menu=document.createElement('section');menu.id='favorite-tool-menu';menu.hidden=true;menu.setAttribute('aria-label',ui('Favourite tools'));document.body.appendChild(menu);
+    const manageButton=()=>bar.querySelector('[data-manage-favourites]');
+    const closeMenu=(restoreFocus=false)=>{
+      menu.hidden=true;
+      manageButton()?.setAttribute('aria-expanded','false');
+      if(restoreFocus)manageButton()?.focus();
+    };
+    const positionMenu=(x,y,above=true)=>{
+      menu.hidden=false;
+      const width=menu.offsetWidth,height=menu.offsetHeight;
+      menu.style.left=Math.max(8,Math.min(innerWidth-width-8,x))+'px';
+      menu.style.top=Math.max(8,Math.min(innerHeight-height-8,above?y-height-10:y))+'px';
+      manageButton()?.setAttribute('aria-expanded','true');
+    };
+    const names={crosshair:'Con trỏ',line:'Đường xu hướng',hline:'Đường ngang',vline:'Đường dọc',box:'Hộp Order Block / Range',text:'Ghi chú',fib:'Fibonacci Retracement',position:'Vị thế Long',short_position:'Vị thế Short',measure:'Đo giá và số nến',brush:'Cọ vẽ'};
+    this.openFavorites=rect=>{
+      menu.replaceChildren();
+      const header=document.createElement('header');
+      const title=document.createElement('strong');title.textContent=ui('Favourite tools');
+      const count=document.createElement('span');count.className='favourite-picker-count';
+      header.append(title,count);
+      const list=document.createElement('div');list.className='favourite-picker-list';
+      menu.append(header,list);
+      const updateCount=()=>{count.textContent=this.favorites.length+(TerminalLanguage.language==='vi'?' đã ghim':' pinned');};
+      const seen=new Set();
+      for(const tool of document.querySelectorAll('#left-sidebar [data-tool]')){
+        const key=tool.dataset.tool;
+        if(!names[key]||seen.has(key))continue;
+        seen.add(key);
+        const button=document.createElement('button');button.type='button';button.className='favourite-picker-row';
+        const icon=tool.querySelector('svg')?.cloneNode(true);
+        if(icon){icon.setAttribute('aria-hidden','true');button.append(icon);}
+        const name=document.createElement('span');name.textContent=ui(names[key]);button.append(name);
+        const shortcut=(tool.title||tool.getAttribute('aria-label')||'').match(/\(([^()]+)\)$/)?.[1];
+        if(shortcut){const hint=document.createElement('kbd');hint.textContent=shortcut;button.append(hint);}
+        const star=document.createElement('span');star.className='favourite-picker-star';star.setAttribute('aria-hidden','true');button.append(star);
+        const update=()=>{
+          const pinned=this.favorites.includes(key);
+          button.setAttribute('aria-pressed',String(pinned));
+          star.textContent=pinned?'★':'☆';
+        };
+        button.onclick=()=>{
+          this.favorites=this.favorites.includes(key)?this.favorites.filter(value=>value!==key):[...this.favorites,key];
+          Workspace.write('terminal_drawing_favorites_v1',this.favorites);
+          update();updateCount();draw();
+          const anchor=manageButton()?.getBoundingClientRect();
+          if(anchor)positionMenu(anchor.left,anchor.top);
+        };
+        update();list.append(button);
+      }
+      updateCount();
+      positionMenu(rect.left,rect.top);
+      list.querySelector('button')?.focus({preventScroll:true});
+    };
     for(const b of document.querySelectorAll('#left-sidebar [data-tool]')){
       if(['trash','lock','hide','eye','magnet'].includes(b.dataset.tool))continue;
       const star=document.createElement('button');star.className='favorite-star';star.type='button';star.textContent=this.favorites.includes(b.dataset.tool)?'★':'☆';star.title='Toggle favourite';star.setAttribute('aria-label','Favourite '+(b.title||b.dataset.tool));const slot=document.createElement('div');slot.className='drawing-favourite-slot';b.before(slot);slot.append(b,star);star.onclick=e=>{e.stopPropagation();const key=b.dataset.tool;this.favorites=this.favorites.includes(key)?this.favorites.filter(x=>x!==key):[...this.favorites,key];Workspace.write('terminal_drawing_favorites_v1',this.favorites);draw();};
       b.addEventListener('contextmenu',e=>{e.preventDefault();const key=b.dataset.tool;menu.replaceChildren();const toggle=document.createElement('button');toggle.textContent=this.favorites.includes(key)?'★ Remove favourite':'☆ Add favourite';toggle.onclick=()=>{this.favorites=this.favorites.includes(key)?this.favorites.filter(x=>x!==key):[...this.favorites,key];Workspace.write('terminal_drawing_favorites_v1',this.favorites);menu.hidden=true;draw();};menu.appendChild(toggle);menu.style.left=Math.min(innerWidth-180,e.clientX)+'px';menu.style.top=Math.min(innerHeight-50,e.clientY)+'px';menu.hidden=false;});
     }
-    document.addEventListener('pointerdown',e=>{if(!menu.contains(e.target))menu.hidden=true;});
-    const position=Workspace.read('terminal_favorites_position_v1',{x:100,y:70});bar.style.left=position.x+'px';bar.style.top=position.y+'px';draw();
+    document.addEventListener('pointerdown',e=>{if(!menu.contains(e.target)&&!e.target.closest('[data-manage-favourites]'))closeMenu();});
+    menu.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeMenu(true);}});
+    draw();
   }
   draggable(handle,bar){handle.onpointerdown=e=>{if(e.button!==0)return;e.preventDefault();this.justDragged=false;handle.setPointerCapture(e.pointerId);const r=bar.getBoundingClientRect(),dx=e.clientX-r.left,dy=e.clientY-r.top,x=e.clientX,y=e.clientY;handle.onpointermove=m=>{if(Math.hypot(m.clientX-x,m.clientY-y)<4&&!this.justDragged)return;this.justDragged=true;bar.style.left=Math.max(0,Math.min(innerWidth-bar.offsetWidth,m.clientX-dx))+'px';bar.style.top=Math.max(0,Math.min(innerHeight-bar.offsetHeight,m.clientY-dy))+'px';};handle.onpointerup=()=>{handle.onpointermove=null;Workspace.write('terminal_favorites_position_v1',{x:parseFloat(bar.style.left),y:parseFloat(bar.style.top)});};handle.onpointercancel=()=>{handle.onpointermove=null;};};}
   clampFavorites(){const b=this.favoriteBar;if(!b||b.hidden)return;b.style.left=Math.max(0,Math.min(innerWidth-b.offsetWidth,parseFloat(b.style.left)||0))+'px';b.style.top=Math.max(0,Math.min(innerHeight-b.offsetHeight,parseFloat(b.style.top)||0))+'px';}

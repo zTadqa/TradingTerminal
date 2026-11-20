@@ -1,0 +1,51 @@
+/* Shared enter/exit timing. Discrete display transitions retain closing surfaces
+   until the last frame, while the app updates its logical state immediately. */
+:root{--surface-duration:320ms;--surface-ease:cubic-bezier(.22,1,.36,1)}
+body:not(.reduce-motion) .modal{
+ opacity:1!important;
+ transition:display var(--surface-duration) allow-discrete!important;
+}
+body:not(.reduce-motion) .modal.show{opacity:1}
+body:not(.reduce-motion) .modal :is(.modal-content,.chart-settings-dialog,.drawing-dialog,.indicator-settings-dialog){
+ animation:none!important;
+ transform:translateX(24px) scale(.985);
+ transition:transform var(--surface-duration) var(--surface-ease)!important;
+}
+body:not(.reduce-motion) .modal.show :is(.modal-content,.chart-settings-dialog,.drawing-dialog,.indicator-settings-dialog){transform:translateX(0) scale(1)}
+/* A closing sheet cannot catch clicks or cover the newly active panel. */
+.modal:not(.show),.modal:not(.show) *{pointer-events:none!important}
+body:not(.reduce-motion) :is(#desktop-panel,.companion-panel:not(.music-mini),#paper-panel){
+ transition:transform var(--surface-duration) var(--surface-ease),visibility var(--surface-duration) allow-discrete,display var(--surface-duration) allow-discrete,right var(--surface-duration) var(--surface-ease)!important;
+}
+body:not(.reduce-motion) :is(#desktop-panel:not([hidden]),.companion-panel.open:not(.music-mini),#paper-panel.open){opacity:1!important;transform:translateX(0)!important;visibility:visible}
+body:not(.reduce-motion) :is(#desktop-panel[hidden],.companion-panel:not(.open):not(.music-mini),#paper-panel:not(.open)){
+ opacity:1!important;transform:translateX(24px)!important;
+}
+:is(#desktop-panel[hidden],.companion-panel:not(.open):not(.music-mini),#paper-panel:not(.open)),
+:is(#desktop-panel[hidden],.companion-panel:not(.open):not(.music-mini),#paper-panel:not(.open)) *{pointer-events:none!important}
+@starting-style{
+ body:not(.reduce-motion) .modal.show{opacity:1!important}
+ body:not(.reduce-motion) .modal.show :is(.modal-content,.chart-settings-dialog,.drawing-dialog,.indicator-settings-dialog){transform:translateX(24px) scale(.985)}
+ body:not(.reduce-motion) :is(#desktop-panel:not([hidden]),.companion-panel.open:not(.music-mini),#paper-panel.open){opacity:1!important;transform:translateX(24px)!important}
+}
+body.reduce-motion :is(.modal,#desktop-panel,.companion-panel,#paper-panel),
+body.reduce-motion .modal :is(.modal-content,.chart-settings-dialog,.drawing-dialog,.indicator-settings-dialog){transition:none!important;animation:none!important}
+/* Preserve the web preference: explicit Reduce motion Off remains animated. */
+/* Opaque sheets from the first frame; only their position/scale changes. */
+body .modal{opacity:1!important}
+body .modal :is(.modal-content,.chart-settings-dialog,.drawing-dialog,.indicator-settings-dialog){opacity:1!important}
+body :is(#settings-modal,#qt-settings-modal,#drawing-settings,.indicator-settings-modal) :is(.modal-content,.chart-settings-dialog,.drawing-dialog,.indicator-settings-dialog){background-color:var(--bg)!important}
+/* Closed companion panels remain painted only until the slide completes.
+   Explicit visibility also applies with Reduce motion enabled. */
+body .companion-panel:not(.open):not(.music-mini){visibility:hidden!important}
+body .companion-panel.open:not(.music-mini){visibility:visible!important}
+body:not(.reduce-motion) .companion-panel:not(.music-mini){transition:transform var(--surface-duration) var(--surface-ease),visibility var(--surface-duration),right var(--surface-duration) var(--surface-ease)!important}
+body:not(.reduce-motion) :is(#calendar-panel,#music-panel).companion-panel:not(.music-mini){transition:transform var(--surface-duration) var(--surface-ease),visibility var(--surface-duration),right var(--surface-duration) var(--surface-ease)!important}
+/* Hover is distinct from selected: a just-closed tab never stays blue. */
+html body #right-sidebar > button[data-panel]:not(.active):is(:hover,:focus-visible),
+html body #right-sidebar #terminal-edge-dock .edge-handle[aria-expanded=false]:is(:hover,:focus-visible){background:color-mix(in srgb,var(--text) 9%,var(--bg))!important;color:var(--text)!important;box-shadow:none!important;transform:none!important}
+html body #right-sidebar :is(button[data-panel],.edge-handle):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Start hidden at DOM creation, before any transition can expose the surface. */
+html body :is(#music-panel,#calendar-panel).companion-panel[hidden]{display:none!important}
+body:not(.reduce-motion) :is(#calendar-panel,#music-panel).companion-panel:not(.music-mini){transition:transform var(--surface-duration) var(--surface-ease),visibility var(--surface-duration),display var(--surface-duration) allow-discrete,right var(--surface-duration) var(--surface-ease)!important}

@@ -1,0 +1,84 @@
+    #dock-market-status { position: relative; color: var(--text); }
+    #reload-chart-data { position: absolute; inset: 0; width: 100%; padding: 0; background: transparent; border-radius: inherit; }
+    #dock-market-status > span { pointer-events: none; }
+    #topbar .dock-clock #live-tz { position: relative; pointer-events: auto; border: 0; }
+    #topbar .dock-clock #live-tz[aria-expanded="true"] {
+      color: var(--text);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 24%, transparent);
+    }
+    #clock-timezone-menu {
+      position: fixed; inset: var(--tz-top, 0px) var(--tz-right, 12px) auto auto;
+      box-sizing: border-box; margin: 0; width: min(300px, calc(100vw - 24px));
+      max-height: min(360px, calc(100dvh - var(--tz-top, 0px) - 12px));
+      padding: 8px; overflow: auto; overscroll-behavior: contain;
+      scrollbar-width: thin; scrollbar-color: var(--muted) transparent;
+      color: var(--text); font-family: var(--dock-font, inherit);
+      background: linear-gradient(150deg, var(--glass2), transparent 60%), var(--bg);
+      border: 1px solid var(--line); border-radius: 18px;
+      box-shadow: 0 16px 36px #0004, inset 0 1px 0 var(--glass2);
+    }
+    body:not(.reduce-motion) #clock-timezone-menu:popover-open {
+      animation: clock-timezone-in .18s cubic-bezier(.22,1,.36,1) both;
+    }
+    @keyframes clock-timezone-in {
+      from { opacity: 0; transform: translateY(4px) scale(.985); }
+      to { opacity: 1; transform: none; }
+    }
+    #clock-timezone-menu h2 {
+      margin: 2px 4px 5px; padding: 6px 8px 9px; border-bottom: 1px solid var(--line);
+      color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    #clock-timezone-menu button {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto 12px;
+      gap: 9px; align-items: center; width: 100%; min-height: 36px; padding: 6px 10px;
+      text-align: left; background: transparent; border-radius: 9px; font-weight: 600;
+    }
+    #clock-timezone-menu button:is(:hover, :focus-visible) { background: var(--glass2); }
+    #clock-timezone-menu .clock-timezone-offset {
+      color: var(--muted); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums;
+    }
+    #clock-timezone-menu button[aria-pressed="true"] {
+      color: var(--text);
+      background: color-mix(in srgb, var(--accent) 15%, var(--bg));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+    }
+    #clock-timezone-menu button[aria-pressed="true"]::after { content: "✓"; color: var(--accent); }
+  
+
+/* Separate hit targets: reload belongs only to connection status. */
+#dock-market-status > #connection-status,
+#dock-market-status > .dock-clock { position: relative; pointer-events: auto; }
+#connection-status > #reload-chart-data { inset: 0; width: 100%; height: 100%; border: 0; z-index: 1; }
+#clock-settings-trigger { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; z-index: 1; }
+#topbar .dock-clock #live-tz { z-index: 2; }
+#clock-settings-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* Equal inset before the ring and after the status text, up to the clock divider. */
+#topbar #dock-market-status:not(:has(#connection-status[data-state="loading"])) {
+  padding-inline: 12px;
+  gap: 0;
+}
+#topbar .topbar-right #connection-status {
+  padding: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 28px;
+  line-height: 20px;
+}
+#topbar #connection-status .dock-load-ring {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+#topbar #connection-status-text {
+  line-height: 20px;
+  letter-spacing: normal;
+}
+#topbar #dock-market-status > .dock-clock {
+  margin-left: 12px;
+  padding-left: 12px;
+}

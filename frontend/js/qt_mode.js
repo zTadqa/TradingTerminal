@@ -1,0 +1,1109 @@
+/* QT Mode Controller & Settings UI — Auto-runs QuantaibayEngine on all charts.
+ * Drop-in replacement for generic Indicator Library/Editor.
+ */
+class QTMode {
+  static GENERAL_LABELS = {
+    tz: 'Cycle timezone',
+    symA: 'Chart symbol',
+    symB: 'SSMT peer 1',
+    symC: 'SSMT peer 2',
+    trShowLbl:'Show Text',trLblPos:'Text Position (horizontal)',trLblVert:'Text Position (vertical)',trLblSizeIn:'Text Size'
+  };
+
+  constructor(options = {}) {
+    this.charts = options.charts || [];
+    this.getActive = options.getActive || (() => this.charts[0]);
+    this.getMarkets = options.getMarkets || (() => new Map());
+    this.isReplay = options.isReplay || (() => false);
+    this.requestNative = options.requestNative || (() => {});
+    this.toast = options.toast || (() => {});
+    this.storageKey = options.storageKey || 'terminal_qt_mode_v1';
+
+    const saved = this._readStorage();
+    const rawSettings = { ...(saved.settings || {}) };
+    if (!saved.v2) {
+      delete rawSettings.showSsmtTxt;
+      if (rawSettings.lblClr === '#787b86cc') delete rawSettings.lblClr;
+    }
+    // Clean any obsolete per-item keys from v3 while keeping unified settings
+    const validKeys = new Set(Object.keys(QuantaibayEngine.DEFAULTS));
+    for (const k of Object.keys(rawSettings)) {
+      if (!validKeys.has(k)) delete rawSettings[k];
+    }
+
+    if(!saved.cycleLineSlim)rawSettings.cycOpenWidth=0.5;
+    this.enabled = saved.enabled !== false;
+    this.settings = { ...QuantaibayEngine.DEFAULTS, symA:'CME_MINI:NQ1!', ...rawSettings };
+    if(this.settings.symA==='AUTO')this.settings.symA='CME_MINI:NQ1!';
+    this.chartHidden = new Set();
+    this.tableHidden = new Set(Array.isArray(saved.tableHidden)?saved.tableHidden:[]);
+
+    this._raf = 0;
+    this._tickTimer = 0;
+    this._dirtyCharts = new Set();
+    this._chartMeta = new WeakMap();
+    this.palette = null;
+    this.paletteTarget = null;
+
+    this._injectStyles();
+    this._buildModal();
+    this._bindCharts();
+    if (!saved.v2 || saved.v3 || !saved.cycleLineSlim) this._writeStorage();
+  }
+
+  _readStorage() {
+    if (typeof Workspace !== 'undefined' && Workspace.read) {
+      return Workspace.read(this.storageKey, {}) || {};
+    }
+    try {
+      return JSON.parse(localStorage.getItem(this.storageKey) || '{}') || {};
+    } catch {
+      return {};
+    }
+  }
+
+  _writeStorage() {
+    const payload = {
+      v2: true,
+      cycleLineSlim: true,
+      enabled: this.enabled,
+      settings: this.settings,
+      tableHidden: [...this.tableHidden],
+      chartHidden: [...this.chartHidden]
+    };
+    if (typeof Workspace !== 'undefined' && Workspace.write) {
+      return Workspace.write(this.storageKey, payload);
+    }
+    try {
+      localStorage.setItem(this.storageKey, JSON.stringify(payload));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  _injectStyles() {
+    if (typeof document === 'undefined' || document.getElementById('qt-mode-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'qt-mode-styles';
+    style.textContent = `
+      #topbar #btn-indicator.qt-mode-pill {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        gap: 5px;
+        padding: 0 9px !important;
+        width: auto !important;
+        min-width: 48px;
+        height: 32px;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 12px;
+        letter-spacing: 0.03em;
+        color: var(--text, #334155) !important;
+        background: rgba(120, 123, 134, 0.12);
+        border: 1px solid rgba(120, 123, 134, 0.24);
+        transition: background .15s, color .15s, border-color .15s, box-shadow .15s;
+      }
+      #topbar #btn-indicator.qt-mode-pill > span {
+        display: inline !important;
+      }
+      #topbar #btn-indicator.qt-mode-pill .qt-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #94a3b8;
+        transition: background .15s, box-shadow .15s;
+      }
+      #topbar #btn-indicator.qt-mode-pill.active {
+        color: var(--accent) !important;
+        background: color-mix(in srgb, var(--accent) 16%, transparent);
+        border-color: color-mix(in srgb, var(--accent) 44%, transparent);
+      }
+      #topbar #btn-indicator.qt-mode-pill.active .qt-dot {
+        background: var(--accent);
+        box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 75%, transparent);
+      }
+      #topbar #btn-qt-settings {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 32px;
+        min-width: 32px;
+        height: 32px;
+        padding: 0;
+        border-radius: 8px;
+        color: var(--text, #334155) !important;
+        background: transparent;
+      }
+      #topbar #btn-qt-settings:hover {
+        background: rgba(120, 123, 134, 0.14);
+      }
+      .tv-indi-popover {
+        position: fixed !important;
+        z-index: 10020 !important;
+        max-height: calc(100vh - 16px);
+        overflow-y: auto;
+      }
+      .qt-table-layer {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 22;
+      }
+      .qt-cycle-table-wrap {
+        position: absolute;
+        pointer-events: auto;
+        cursor: pointer;
+        border-radius: 8px;
+        overflow: hidden;
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+        transition: box-shadow .15s, transform .15s;
+      }
+      .qt-cycle-table-wrap:hover {
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+      }
+      .qt-cycle-table {
+        border-collapse: collapse;
+        font-family: var(--font-ui);
+        line-height: 1.25;
+        font-variant-numeric: tabular-nums;
+      }
+      .qt-cycle-table tr:first-child td {
+        font-size: 9.5px !important;
+        text-transform: uppercase;
+        letter-spacing: 0.055em;
+        opacity: 0.78;
+        padding-top: 4px;
+        padding-bottom: 4px;
+      }
+      .qt-cycle-table td {
+        padding: 3px 9px;
+        white-space: nowrap;
+      }
+      .qt-cycle-table td:last-child {
+        min-width: 42px;
+      }
+      .indicator-legend {
+        display: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  mountTopbar(indicatorButton) {
+    if (!indicatorButton) return;
+    this.toggleButton = indicatorButton;
+    const cleanBtn = indicatorButton.cloneNode(false);
+    cleanBtn.className = 'btn-icon qt-mode-pill';
+    cleanBtn.id = indicatorButton.id;
+    cleanBtn.title = 'QT Mode (Quantaibay Auto) — Bấm để Bật / Tắt';
+    cleanBtn.setAttribute('aria-label', 'Toggle QT Mode');
+    cleanBtn.innerHTML = '<i class="qt-dot" aria-hidden="true"></i><span>QT</span>';
+    indicatorButton.replaceWith(cleanBtn);
+    this.toggleButton = cleanBtn;
+
+    cleanBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      this.setEnabled(!this.enabled);
+    });
+
+    document.getElementById('btn-indicator-settings')?.remove();
+    document.getElementById('btn-qt-settings')?.remove();
+    const gear = document.createElement('button');
+    gear.type = 'button';
+    gear.id = 'btn-qt-settings';
+    gear.className = 'btn-icon';
+    gear.title = 'QT Mode Settings (Quantaibay)';
+    gear.setAttribute('aria-label', 'QT Mode Settings');
+    gear.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+    cleanBtn.after(gear);
+    this.settingsButton = gear;
+    gear.addEventListener('click', e => {
+      e.stopPropagation();
+      if (this.modal.classList.contains('show')) this.cancelSettings();
+      else this.openSettings(this.getActive());
+    });
+
+    const legacyModal = document.getElementById('indicator-modal');
+    if (legacyModal) {
+      legacyModal.classList.remove('show');
+      legacyModal.hidden = true;
+    }
+
+    this._syncTopbarButton();
+  }
+
+  _syncTopbarButton() {
+    if (!this.toggleButton) return;
+    this.toggleButton.classList.toggle('active', this.enabled);
+    this.toggleButton.setAttribute('aria-pressed', String(this.enabled));
+  }
+
+  setEnabled(next) {
+    this.enabled = !!next;
+    if (this.enabled) this.chartHidden.clear();
+    const legacyModal = document.getElementById('indicator-modal');
+    if (legacyModal) {
+      legacyModal.classList.remove('show');
+      legacyModal.hidden = true;
+    }
+
+    this._syncTopbarButton();
+    this._writeStorage();
+    this.scheduleAll();
+  }
+
+  toggleChart(chart) {
+    if (!chart) return;
+    if (this.chartHidden.has(chart.id)) this.chartHidden.delete(chart.id);
+    else this.chartHidden.add(chart.id);
+    this._writeStorage();
+    this.schedule(chart);
+  }
+
+  _bindCharts() {
+    for (const chart of this.charts) {
+      try { chart.runner?.stop?.(); } catch {}
+      chart.clearCustomSeries?.();
+
+      chart.container.querySelector('.indicator-legend')?.remove();
+      const tableLayer = document.createElement('div');
+      tableLayer.className = 'qt-table-layer';
+      chart.container.appendChild(tableLayer);
+
+      this._chartMeta.set(chart, { tableLayer, qLabels: [], trLabels: [], labelPadPct: 8, candleColorSig: '' });
+
+      const self = this;
+      chart.runner = {
+        ready: true,
+        get entries() {
+          const hidden = !self.enabled || self.chartHidden.has(chart.id);
+          return [{
+            name: 'Quantaibay (QT Mode)',
+            record: { id: 'qt', name: 'Quantaibay (QT Mode)', enabled: self.enabled, view: { hidden } }
+          }];
+        },
+        schedule: () => self.schedule(chart),
+        stop: () => {},
+        restart: () => self.schedule(chart),
+        toggle: () => self.toggleChart(chart),
+        remove: () => {},
+        select: () => {}
+      };
+
+      chart.onIndicatorSettings = () => this.openSettings(chart);
+      chart.onIndicatorToggle = () => this.toggleChart(chart);
+      chart.onDataChange = () => this.schedule(chart);
+
+      const syncPins = range => {
+        const meta = this._chartMeta.get(chart);
+        if (!meta || !chart.bars?.length || (!meta.qLabels?.length && !meta.trLabels?.length)) return false;
+        const r = range ?? chart.chart.timeScale().getVisibleLogicalRange?.();
+        const rKey = r && Number.isFinite(r.from) && Number.isFinite(r.to)
+          ? `${r.from}:${r.to}:${chart.bars.length}:${meta.labelPadPct}:${chart.tfSeconds}`
+          : '';
+        if (rKey && meta.lastPinKey === rKey) return false;
+        meta.lastPinKey = rKey;
+        if (meta.qLabels?.length) QuantaibayEngine.pinQLabels(meta.qLabels, chart.bars, r, meta.labelPadPct);
+        if (meta.trLabels?.length) QuantaibayEngine.pinTrueOpenLabels?.(meta.trLabels, chart.bars, r, chart.tfSeconds);
+        return true;
+      };
+      chart.onBeforeRenderDrawings = () => { syncPins(); };
+      chart.chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+        if (syncPins(range)) chart.renderDrawings();
+      });
+    }
+  }
+
+  scheduleAll() {
+    this._settingsRev = (this._settingsRev || 0) + 1;
+    for (const chart of this.charts) {
+      if (!chart.container.hidden) this._dirtyCharts.add(chart);
+    }
+    this._flushSchedule();
+  }
+
+  schedule(chart) {
+    if (!chart || chart.container.hidden) return;
+    this._dirtyCharts.add(chart);
+    this._flushSchedule();
+  }
+
+  _flushSchedule() {
+    if (this._raf) return;
+    const run = () => {
+      this._raf = 0;
+      if (typeof requestAnimationFrame === 'function') {
+        const next = this._dirtyCharts.values().next().value;
+        if (!next) return;
+        this._dirtyCharts.delete(next);
+        this.renderChart(next);
+        if (this._dirtyCharts.size) this._flushSchedule();
+        return;
+      }
+      const batch = [...this._dirtyCharts];
+      this._dirtyCharts.clear();
+      for (const chart of batch) this.renderChart(chart);
+    };
+    if (typeof requestAnimationFrame === 'function') this._raf = requestAnimationFrame(run);
+    else run();
+  }
+
+  _activeSettings() {
+    return this._previewSettings || this.settings;
+  }
+
+  _settingsForChart(chart){
+    const s=this._activeSettings(),hidden=this._previewTableHidden||this.tableHidden||new Set();
+    return {...s,showCycTbl:!!s.showCycTbl&&!hidden.has(chart.id)};
+  }
+
+  renderChart(chart) {
+    const meta = this._chartMeta.get(chart);
+    if (!meta) return;
+    const s = this._settingsForChart(chart);
+    const showOnChart = this.enabled && !this.chartHidden.has(chart.id);
+
+    if (!showOnChart || !chart.bars?.length) {
+      chart.indicatorDrawings = [];
+      if (meta.candleColorSig) {
+        meta.candleColorSig = '';
+        chart.indicatorCandleColors = new Map();
+        chart.renderCandleData?.();
+      }
+      meta.qLabels = [];
+      meta.trLabels = [];
+      meta.lastPinKey = '';
+      meta.tableSig = '';
+      meta.tableLayer.replaceChildren();
+      chart.renderDrawings();
+      return;
+    }
+
+    const rawMarkets = this.getMarkets();
+    const marketsObj = rawMarkets instanceof Map ? Object.fromEntries(rawMarkets) : (rawMarkets || {});
+    const scopeKey = `${chart.symbol}|${chart.currentTimeframe}|${chart.bars.length}|${!!(chart.replayMode || this.isReplay())}|${this._settingsRev || 0}|${this._previewSettings ? 1 : 0}`;
+    const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (!this._previewSettings && meta.lastScope === scopeKey && meta.lastCalcAt && (nowMs - meta.lastCalcAt) < 1000) {
+      if (!meta.deferredTimer && typeof setTimeout === 'function') {
+        meta.deferredTimer = setTimeout(() => {
+          meta.deferredTimer = 0;
+          this.schedule(chart);
+        }, Math.max(50, 1000 - (nowMs - meta.lastCalcAt)));
+      }
+      return;
+    }
+    if (meta.deferredTimer) { clearTimeout(meta.deferredTimer); meta.deferredTimer = 0; }
+    meta.lastScope = scopeKey;
+    meta.lastCalcAt = nowMs;
+
+    const logicalRange = chart.chart.timeScale().getVisibleLogicalRange();
+    const chartBg = chart.appearance?.bg || chart.appearance?.background || chart.config?.bg || '#c2baae';
+    const sessionMode = chart.appearance?.sessionMode || 'ETH';
+
+    if (marketsObj[chart.symbol]?.['1m']?.length) {
+      if ((s.showCycTbl || s.trTQO || (s.showSsmt && s.en5 && (s.showAll || chart.currentTimeframe === '6h'))) && !marketsObj[chart.symbol]?.['6h']?.length) {
+        this.requestNative({ symbol: chart.symbol, timeframe: '6h' });
+      }
+      if ((s.showCycTbl || s.trTYO || (s.showSsmt && s.en6 && (s.showAll || chart.currentTimeframe === 'D'))) && !marketsObj[chart.symbol]?.D?.length) {
+        this.requestNative({ symbol: chart.symbol, timeframe: 'D' });
+      }
+      if (s.usePsp && chart.tfSeconds >= QuantaibayEngine.tfToSeconds(s.pspVisLimit) && (s.pspVisLimit === 'All charts' || chart.currentTimeframe !== '1m')) {
+        for (const peer of QuantaibayEngine.resolveTriad(chart.symbol, s).slice(1)) {
+          if (!marketsObj[peer]?.[chart.currentTimeframe]?.length) {
+            this.requestNative({ symbol: peer, timeframe: chart.currentTimeframe });
+          }
+        }
+      }
+    }
+
+    const out = QuantaibayEngine.calculate(chart.bars, {
+      symbol: chart.symbol,
+      timeframe: chart.currentTimeframe,
+      timeframeSeconds: chart.tfSeconds,
+      sessionMode,
+      replay: chart.replayMode || this.isReplay(),
+      settings: s,
+      markets: marketsObj,
+      metadata: chart.metadata,
+      visibleLogicalRange: logicalRange,
+      chartBg
+    });
+
+    chart.qtDailyCode=out.dailyCode;
+    chart.qtCycleTimezone=s.tz;
+    if(chart===this.getActive())window.TerminalCycleClock?.update(chart.replayMode?chart.replayClock*1000:Date.now(),chart.qtDailyCode,s.tz);
+    const nextColors = out.candleColors || [];
+    let hash = 2166136261;
+    for (let i = 0; i < nextColors.length; i++) {
+      const item = nextColors[i];
+      hash = Math.imul(hash ^ (item.time | 0), 16777619);
+      const str = item.color;
+      for (let c = 0; c < str.length; c++) hash = Math.imul(hash ^ str.charCodeAt(c), 16777619);
+    }
+    const nextSig = nextColors.length ? `${chart.symbol}:${chart.currentTimeframe}:${nextColors.length}:${hash >>> 0}` : '';
+    if (nextSig !== meta.candleColorSig) {
+      const tailB = chart.bars[chart.bars.length - 1];
+      const prevMap = chart.indicatorCandleColors;
+      const nextMap = new Map(nextColors.map(x => [x.time, x.color]));
+      chart.indicatorCandleColors = nextMap;
+      let onlyTailChanged = false;
+      if (tailB && prevMap instanceof Map && Math.abs(nextMap.size - prevMap.size) <= 1 && typeof chart.series?.update === 'function' && !chart.replayPreview) {
+        onlyTailChanged = true;
+        for (const [t, c] of nextMap) {
+          if (t !== tailB.time && prevMap.get(t) !== c) { onlyTailChanged = false; break; }
+        }
+        if (onlyTailChanged) {
+          for (const [t, c] of prevMap) {
+            if (t !== tailB.time && nextMap.get(t) !== c) { onlyTailChanged = false; break; }
+          }
+        }
+      }
+      meta.candleColorSig = nextSig;
+      if (onlyTailChanged && typeof ChartAppearance !== 'undefined') {
+        const item = chart.appearance ? ChartAppearance.candleData(chart, chart.bars.slice(-2)).at(-1) : (nextMap.has(tailB.time) ? { ...tailB, color: nextMap.get(tailB.time) } : tailB);
+        if (item) chart.series.update(item);
+      } else {
+        chart.renderCandleData?.();
+      }
+    }
+
+    meta.qLabels = out.qLabels || [];
+    meta.trLabels = out.trLabels || [];
+    meta.labelPadPct = out.labelPadPct ?? 8;
+    meta.lastPinKey = '';
+    chart.indicatorDrawings = out.drawings;
+    this._renderTables(meta.tableLayer, out.tables, chart, meta);
+    chart.renderDrawings();
+  }
+
+  _renderTables(layer, tables, chart, meta) {
+    if (!tables?.length) {
+      if (!meta || meta.tableSig !== '') {
+        if (meta) meta.tableSig = '';
+        layer.replaceChildren();
+      }
+      return;
+    }
+    const axisRight = (chart.chart?.priceScale?.('right')?.width?.() || 65) + 8;
+    const axisBottom = (chart.chart?.timeScale?.().height?.() || 26) + 8;
+
+    let topInset = 10;
+    const topbar = document.getElementById('topbar');
+    if (topbar && !topbar.hidden) {
+      const tbRect = topbar.getBoundingClientRect();
+      const chRect = chart.container.getBoundingClientRect();
+      if (tbRect.height > 0 && chRect.top < tbRect.bottom + 4 && tbRect.bottom - chRect.top < 110) {
+        topInset = Math.max(10, Math.ceil(tbRect.bottom - chRect.top + 8));
+      }
+    }
+
+    const sig = `${axisRight}|${axisBottom}|${topInset}|${JSON.stringify(tables)}`;
+    if (meta && meta.tableSig === sig && layer.childElementCount === tables.length) return;
+    if (meta) meta.tableSig = sig;
+    layer.replaceChildren();
+
+    for (const desc of tables) {
+      const wrap = document.createElement('div');
+      wrap.className = 'qt-cycle-table-wrap';
+      wrap.title = 'Double-click để chỉnh cài đặt Cycle Table';
+      wrap.ondblclick = e => { e.stopPropagation(); this.openSettings(chart); };
+
+      const pos = String(desc.position || 'top_right').toLowerCase();
+      let tx = '0', ty = '0';
+      if (pos.includes('left')) wrap.style.left = '10px';
+      else if (pos.includes('center')) { wrap.style.left = `calc((100% - ${axisRight}px) / 2)`; tx = '-50%'; }
+      else wrap.style.right = axisRight + 'px';
+
+      if (pos.includes('bottom')) wrap.style.bottom = axisBottom + 'px';
+      else if (pos.includes('middle')) { wrap.style.top = `calc((100% - ${axisBottom}px) / 2)`; ty = '-50%'; }
+      else wrap.style.top = topInset + 'px';
+
+      if (tx !== '0' || ty !== '0') wrap.style.transform = `translate(${tx}, ${ty})`;
+
+      const tbl = document.createElement('table');
+      tbl.className = 'qt-cycle-table';
+      if (desc.bgcolor) tbl.style.background = desc.bgcolor;
+      if (desc.frameWidth && desc.frameColor) wrap.style.border = `${desc.frameWidth}px solid ${desc.frameColor}`;
+
+      const rows = desc.rows || [];
+      for (let rIdx = 0; rIdx < rows.length; rIdx++) {
+        const row = rows[rIdx];
+        const tr = tbl.insertRow();
+        for (let cIdx = 0; cIdx < row.length; cIdx++) {
+          const cell = row[cIdx];
+          const td = tr.insertCell();
+          td.textContent = String(cell?.text ?? '');
+          if (cell?.color) td.style.color = cell.color;
+          if (cell?.background) td.style.background = cell.background;
+          if (cell?.align) td.style.textAlign = cell.align;
+          if (cell?.size && rIdx > 0) td.style.fontSize = cell.size + 'px';
+          if (cell?.bold) td.style.fontWeight = '700';
+          if (desc.borderWidth && desc.borderColor && rIdx > 0) {
+            td.style.borderTop = `${desc.borderWidth}px solid ${desc.borderColor}`;
+          }
+          if (desc.borderWidth && desc.borderColor && cIdx > 0) {
+            td.style.borderLeft = `${desc.borderWidth}px solid ${desc.borderColor}`;
+          }
+        }
+      }
+      wrap.appendChild(tbl);
+      layer.appendChild(wrap);
+    }
+  }
+
+  // ==================== SETTINGS DIALOG ====================
+  _buildModal() {
+    if (typeof document === 'undefined') return;
+    const modal = document.createElement('div');
+    modal.id = 'qt-settings-modal';
+    modal.className = 'modal qt-settings-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Quantaibay QT Mode Settings');
+    modal.innerHTML = `
+      <div class="modal-content chart-settings-dialog qt-settings-dialog">
+        <div class="modal-header">
+          <div class="cs-heading qt-settings-title-wrap">
+            <h2>Quantaibay</h2>
+            
+          </div>
+          <button type="button" class="modal-close qt-close" aria-label="Close QT settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        </div>
+        <div class="chart-settings-layout">
+          <div class="qt-settings-tools"></div>
+          <div class="chart-settings-body qt-settings-body" id="qt-settings-fields"></div>
+        </div>
+        <div class="chart-settings-error qt-settings-error" role="alert"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary qt-defaults-btn">Defaults</button>
+          <button type="button" class="btn-secondary qt-cancel-btn">Cancel</button>
+          <button type="button" class="btn-primary qt-ok-btn">OK</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    this.modal = modal;
+
+    modal.querySelector('.qt-close').onclick = () => this.cancelSettings();
+    modal.querySelector('.qt-cancel-btn').onclick = () => this.cancelSettings();
+    modal.querySelector('.qt-ok-btn').onclick = () => this.applySettings();
+    modal.querySelector('.qt-defaults-btn').onclick = () => {
+      this._previewSettings = { ...QuantaibayEngine.DEFAULTS, symA:'CME_MINI:NQ1!' };
+      this._renderBody();
+      this.scheduleAll();
+    };
+
+    const body = modal.querySelector('.qt-settings-body');
+    body.addEventListener('scroll', () => this._positionPalette(), { passive: true });
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('resize', () => {
+        this._positionPalette();
+        this.scheduleAll();
+      });
+    }
+
+    modal.addEventListener('click', e => {
+      if (this.palette && !this.palette.contains(e.target) && !e.target.closest?.('.tv-indi-color')) {
+        this._closePalette();
+      }
+      if (e.target === modal) this.cancelSettings();
+    });
+
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape' || !this.modal?.classList.contains('show')) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (this.palette) {
+        if (typeof ColorPicker === 'undefined' || !ColorPicker.closeActiveSub(this.palette)) this._closePalette();
+        return;
+      }
+      this.cancelSettings();
+    }, true);
+  }
+
+  openSettings(chart) {
+    TerminalSettingsPanels.open(this,()=>{if(this.modal.classList.contains('show'))this.cancelSettings();});
+    this.targetChart = chart || this.getActive();
+    this.opener = document.activeElement;
+    this._previewSettings = { ...this.settings };
+    this._previewTableHidden = new Set(this.tableHidden);
+    this.modal.querySelector('.qt-settings-error').textContent = '';
+    this.modal.classList.add('show');
+    this._renderBody();
+    const firstInput = this.modal.querySelector('.qt-tab[aria-selected="true"]');
+    if (firstInput?.focus) {
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => firstInput.focus({ preventScroll: true }));
+      else firstInput.focus({ preventScroll: true });
+    }
+  }
+
+  _closePalette() {
+    this._paletteObserver?.disconnect?.();
+    this._paletteObserver = null;
+    this.palette?.remove();
+    this.palette = null;
+    this.paletteTarget?.classList.remove('active');
+    this.paletteTarget = null;
+  }
+
+  _positionPalette() {
+    if (!this.palette || !this.paletteTarget || typeof window === 'undefined') return;
+    const r = this.paletteTarget.getBoundingClientRect();
+    if (!r.width && !r.height) { this._closePalette(); return; }
+    const pw = this.palette.offsetWidth || 248;
+    const ph = this.palette.offsetHeight || 290;
+    const vw = window.innerWidth || 1280;
+    const vh = window.innerHeight || 720;
+    this.palette.style.left = Math.max(8, Math.min(vw - pw - 8, r.left)) + 'px';
+    this.palette.style.top = (r.bottom + 6 + ph <= vh - 8 ? r.bottom + 6 : Math.max(8, Math.min(vh - ph - 8, r.top - ph - 6))) + 'px';
+  }
+
+  cancelSettings() {
+    TerminalSettingsPanels.dismissMenus();
+    this._closePalette();
+    this._previewSettings = null;
+    this._previewTableHidden = null;
+    this.modal.classList.remove('show');
+    this.scheduleAll();
+    this.opener?.focus?.({ preventScroll: true });
+  }
+
+  applySettings() {
+    TerminalSettingsPanels.dismissMenus();
+    try {
+      for (const f of QuantaibayEngine.INPUT_SCHEMA) {
+        const v = this._previewSettings[f.key];
+        if (f.type === 'int' || f.type === 'float') {
+          if (!Number.isFinite(v) || (f.type === 'int' && !Number.isInteger(v))
+              || (f.min !== undefined && v < f.min) || (f.max !== undefined && v > f.max)) {
+            throw new Error(`Giá trị không hợp lệ ở "${f.label}" (${f.min} – ${f.max})`);
+          }
+        }
+      }
+      this.settings = { ...this._previewSettings };
+      this.tableHidden = new Set(this._previewTableHidden||this.tableHidden);
+      this._previewTableHidden = null;
+      this._previewSettings = null;
+      this._writeStorage();
+      this._closePalette();
+      this.modal.classList.remove('show');
+      this.scheduleAll();
+      this.opener?.focus?.({ preventScroll: true });
+    } catch (err) {
+      this.modal.querySelector('.qt-settings-error').textContent = err.message;
+    }
+  }
+
+  _renderBody() {
+    TerminalSettingsPanels.dismissMenus();
+    this._closePalette();
+    this._tabsObserver?.disconnect();
+    const body = this.modal.querySelector('.qt-settings-body');
+    const tools = this.modal.querySelector('.qt-settings-tools');
+    const restoreToolsFocus = tools.contains(document.activeElement) ? document.activeElement.id : '';
+    body.replaceChildren();
+    const categories = [
+      ['general', 'General', new Set(['General'])],
+      ['ssmt', 'SSMT', new Set(['SSMT Display', 'SSMT Style'])],
+      ['cycle', 'Cycles & Q', new Set(['Cycle Lines / Q Labels', 'AMDX / XAMD'])],
+      ['trueopen', 'True Open', new Set(['True Open', 'True Open Style'])],
+      ['psp', 'PSP', new Set(['Advanced PSP'])],
+      ['table', 'Cycle Table', new Set(['Cycle Table'])]
+    ];
+    let activeCat = categories.some(c => c[0] === this._activeInputCat) ? this._activeInputCat : 'general';
+    this._activeInputCat = activeCat;
+    const ICONS = {
+      general: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+      ssmt: '<path d="M3 17l5-6 4 3 5-8 4 5"/><path d="M3 21h18" opacity=".45"/>',
+      cycle: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/>',
+      trueopen: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+      psp: '<path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5" opacity=".6"/>',
+      table: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 10h18M9 10v10M15 10v10"/>'
+    };
+    const tabs = document.createElement('div');
+    tabs.className = 'chart-settings-nav';
+    tabs.setAttribute('role', 'tablist');
+    tabs.setAttribute('aria-label', 'Nhóm cài đặt QT');
+    const updateTabFade = () => {
+      const max = tabs.scrollWidth - tabs.clientWidth;
+      tabs.style.setProperty('--fl', tabs.scrollLeft > 2 ? '24px' : '0px');
+      tabs.style.setProperty('--fr', tabs.scrollLeft < max - 2 ? '24px' : '0px');
+    };
+    const selectNavigationTab = (name) => {
+    let selected;
+    for (const button of tabs.children) {
+      const active = button.dataset.tab === name;
+      button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
+      if (active) selected = button;
+    }
+    clearTimeout(this._tabScrollTimer);
+    updateTabFade();
+    if (!selected) return;
+    const reduceMotion = document.body.classList.contains('reduce-motion');
+    this._tabScrollTimer = setTimeout(() => {
+      tabs.scrollTo({
+        left: selected.offsetLeft + (selected.offsetWidth - tabs.clientWidth) / 2,
+        behavior: reduceMotion ? 'auto' : 'smooth'
+      });
+      updateTabFade();
+    }, reduceMotion ? 0 : 300);
+    };
+
+    tabs.addEventListener('scroll', updateTabFade, { passive: true });
+    tabs.addEventListener('transitionend', updateTabFade);
+    const renderFiltered = (animate = false) => {
+      TerminalSettingsPanels.dismissMenus();
+      this._closePalette();
+      const q = '';
+      const catEntry = categories.find(c => c[0] === activeCat) || categories[0];
+      const baseFields = q
+        ? QuantaibayEngine.INPUT_SCHEMA
+        : QuantaibayEngine.INPUT_SCHEMA.filter(f => catEntry[2].has(f.group));
+      body.replaceChildren();
+      body.scrollTop = 0;
+      body.setAttribute('role', q ? 'region' : 'tabpanel');
+      if (q) {
+        body.removeAttribute('aria-labelledby');
+        body.setAttribute('aria-label', 'Kết quả tìm kiếm');
+      } else {
+        body.removeAttribute('aria-label');
+        body.setAttribute('aria-labelledby', 'qt-tab-' + activeCat);
+      }
+      const fields = document.createElement('div');
+
+      this._renderSchemaFields(fields, baseFields, q);
+      body.appendChild(fields);
+      if (animate && !document.body.classList.contains('reduce-motion')) fields.animate([{opacity:0,transform:'translateY(5px)'},{opacity:1,transform:'none'}],{duration:220,easing:'cubic-bezier(.2,.8,.2,1)'});
+      tabs.classList.toggle('is-searching', !!q);
+    };
+
+    const tabEls = [];
+    for (const [id, title] of categories) {
+      const tab = document.createElement('button');
+      tab.type = 'button';
+      tab.className = 'chart-settings-tab' + (id === activeCat ? ' active' : '');
+      tab.dataset.tab = id;
+      tab.id = 'qt-tab-' + id;
+      tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-controls', 'qt-settings-fields');
+      tab.setAttribute('aria-label', title);
+      tab.setAttribute('aria-selected', id === activeCat ? 'true' : 'false');
+      tab.tabIndex = id === activeCat ? 0 : -1;
+      tab.innerHTML = `<svg class="qt-tab-ico" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[id] || ''}</svg><span class="chart-tab-label"><span class="qt-tab-label"></span></span>`;
+      tab.querySelector('.qt-tab-label').textContent = title;
+      tab.onclick = () => {
+        if (activeCat === id) return;
+        activeCat = id;
+        this._activeInputCat = id;
+        for (const t of tabEls) {
+          const on = t === tab;
+          t.classList.toggle('active', on);
+          t.setAttribute('aria-selected', on ? 'true' : 'false');
+          t.tabIndex = on ? 0 : -1;
+        }
+        selectNavigationTab(activeCat);
+        renderFiltered(true);
+      };
+      tab.onkeydown = e => {
+        const i = tabEls.indexOf(tab);
+        let n = -1;
+        if (e.key === 'ArrowRight') n = (i + 1) % tabEls.length;
+        else if (e.key === 'ArrowLeft') n = (i - 1 + tabEls.length) % tabEls.length;
+        else if (e.key === 'Home') n = 0;
+        else if (e.key === 'End') n = tabEls.length - 1;
+        if (n < 0) return;
+        e.preventDefault();
+        tabEls[n].focus();
+        tabEls[n].click();
+      };
+      tabEls.push(tab);
+      tabs.appendChild(tab);
+    }
+    tools.replaceChildren(tabs);
+    requestAnimationFrame(() => selectNavigationTab(activeCat));
+    this._tabsObserver = new ResizeObserver(updateTabFade);
+    this._tabsObserver.observe(tabs);
+    renderFiltered();
+    if (restoreToolsFocus) document.getElementById(restoreToolsFocus)?.focus({ preventScroll: true });
+  }
+
+  _settingsGroup(field) {
+    const key = field.key;
+    if (field.group === 'General') return key === 'tz' || key === 'm1Timing' ? 'Cycle timing' : 'Symbols & correlation';
+    if (field.group === 'SSMT Display') {
+      if (/^en[0-6]$/.test(key)) return 'Timeframes';
+      return ['maxRow', 'showOld'].includes(key) ? 'Previous cycles' : 'Display';
+    }
+    if (field.group === 'SSMT Style') return /^(cBull|cBear|cHBull|cHBear)$/.test(key) ? 'Line colors' : key.startsWith('lbl') ? 'Labels' : 'Line style';
+    if (field.group === 'Cycle Lines / Q Labels') return /^(showQLabels|qColor|qSizeInput|labelPadPct|showSub|maxQL)$/.test(key) ? 'Quarter labels' : 'Cycle lines';
+    if (field.group === 'AMDX / XAMD') return 'AMDX / XAMD';
+    if (field.group === 'True Open') return 'Open levels';
+    if (field.group === 'True Open Style') return /^(trCol|trWid|trStyleIn)$/.test(key) ? 'Line style' : key === 'trMaxKeep' ? 'History' : 'Text';
+    if (field.group === 'Advanced PSP') {
+      if (/Body$/.test(key) || key === 'pspMode') return 'Candle appearance';
+      if (/^psp(Bull|Bear)(Clr|Shape)$/.test(key) || key === 'pspSizeStr') return 'Markers';
+      if (/^psp(ShowSmt|Inv)/.test(key)) return 'Peer comparison';
+      return 'Display';
+    }
+    return ['showCycTbl', 'cycPos'].includes(key) ? 'Table layout' : 'Table appearance';
+  }
+
+  _renderSchemaFields(container, fields, query) {
+    fields = fields.map(field => ({ ...field, group: this._settingsGroup(field), inline: null }));
+    const groups = [...new Set(fields.map(field => field.group))];
+    fields.sort((a, b) => groups.indexOf(a.group) - groups.indexOf(b.group));
+    const filtered = query
+      ? fields.filter(f => `${f.label} ${QTMode.GENERAL_LABELS[f.key] || ''} ${f.group} ${f.key}`.toLowerCase().includes(query))
+      : fields;
+
+    if (!filtered.length) {
+      const empty = document.createElement('p');
+      empty.className = 'qt-empty';
+      empty.setAttribute('role', 'status');
+      empty.textContent = 'Không tìm thấy cài đặt phù hợp.';
+      container.appendChild(empty);
+      return;
+    }
+
+    let curGroup = null;
+    let groupFields;
+    let i = 0;
+    const isTimeframe = field => /^en[0-6]$/.test(field?.key || '');
+    while (i < filtered.length) {
+      const field = filtered[i];
+      if (field.group !== curGroup) {
+        curGroup = field.group;
+        const section = document.createElement('section');
+        section.className = 'qt-field-group';
+        const heading = document.createElement('h3');
+        heading.className = 'qt-group-heading';
+        heading.textContent = curGroup;
+        groupFields = document.createElement('div');
+        groupFields.className = 'chart-setting-card qt-field-card';
+        section.append(heading, groupFields);
+        container.appendChild(section);
+      }
+      if (isTimeframe(field)) {
+        const row = document.createElement('div');
+        row.className = 'qt-timeframes';
+        row.setAttribute('role', 'group');
+        row.setAttribute('aria-label', 'SSMT timeframes');
+        while (isTimeframe(filtered[i])) {
+          const { key, label } = filtered[i++];
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.dataset.inputKey = key;
+          button.textContent = label;
+          button.setAttribute('aria-pressed', String(!!this._previewSettings[key]));
+          button.onclick = () => {
+            this._previewSettings[key] = !this._previewSettings[key];
+            button.setAttribute('aria-pressed', String(this._previewSettings[key]));
+            this.scheduleAll();
+          };
+          row.appendChild(button);
+        }
+        groupFields.appendChild(row);
+      } else if (field.group==='Open levels' && /^tr(TMCO|90|TDO|TWO|TMO|TQO|TYO)$/.test(field.key)) {
+        const row=document.createElement('div');row.className='qt-timeframes qt-open-levels';row.setAttribute('role','group');row.setAttribute('aria-label','True Open levels');
+        const frames={trTMCO:'1m',tr90:'5m',trTDO:'15m',trTWO:'1h',trTMO:'4h',trTQO:'6h',trTYO:'D'};
+        while(filtered[i]?.group==='Open levels' && Object.hasOwn(frames,filtered[i].key)){
+          const {key,label}=filtered[i++],button=document.createElement('button');button.type='button';button.dataset.inputKey=key;button.title=label;button.setAttribute('aria-label',label);button.setAttribute('aria-pressed',String(!!this._previewSettings[key]));
+          const name=document.createElement('span');name.textContent=key.slice(2);button.append(name);
+          button.onclick=()=>{this._previewSettings[key]=!this._previewSettings[key];button.setAttribute('aria-pressed',String(!!this._previewSettings[key]));this.scheduleAll();};row.append(button);
+        }
+        groupFields.append(row);
+      } else if (field.inline && !query) {
+        const inlineKey = field.inline;
+        const row = document.createElement('div');
+        row.className = 'qt-inline-row';
+        while (i < filtered.length && filtered[i].group === curGroup && filtered[i].inline === inlineKey) {
+          row.appendChild(this._createControl(filtered[i], true));
+          i++;
+        }
+        groupFields.appendChild(row);
+      } else {
+        groupFields.appendChild(this._createControl(field, false));
+        if(field.key==='showCycTbl'){
+          for(const chart of this.charts.slice(0,3)){
+            const row=document.createElement('label');row.className='chart-setting-row qt-row';
+            const text=document.createElement('span');text.textContent=String(chart.symbol).split(':').pop().replace(/[12]!$/,'');
+            const input=document.createElement('input');input.type='checkbox';input.dataset.amdxChart=chart.id;
+            input.setAttribute('aria-label','AMDX table for '+text.textContent);
+            input.title='Show AMDX on this chart when the main table switch is on';
+            input.checked=!this._previewTableHidden.has(chart.id);
+            input.onchange=()=>{if(input.checked)this._previewTableHidden.delete(chart.id);else this._previewTableHidden.add(chart.id);this.schedule(chart);};
+            row.append(text,input);groupFields.appendChild(row);
+          }
+        }
+        i++;
+      }
+    }
+  }
+
+  _createControl(descriptor, compact) {
+    const { key, type, label, tooltip, options, min, max, step } = descriptor;
+    const target = this._previewSettings;
+    const val = target[key] ?? QuantaibayEngine.DEFAULTS[key];
+
+    const wrap = document.createElement('label');
+    wrap.className = 'chart-setting-row qt-row';
+    if (tooltip) wrap.title = tooltip;
+    else if (QTMode.GENERAL_LABELS[key]) wrap.title = label;
+
+    const text = document.createElement('span');
+    text.textContent = QTMode.GENERAL_LABELS[key] || label;
+
+    if (type === 'color') {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chart-color tv-indi-color';
+      btn.dataset.inputKey = key;
+      btn.setAttribute('aria-label', label);
+      const swatch = document.createElement('span');
+      swatch.style.background = QuantaibayEngine.parseColor(val).css;
+      btn.appendChild(swatch);
+      btn.onclick = e => {
+        e.preventDefault();
+        e.stopPropagation();
+        this._openColorPopover(btn, swatch, key, label);
+      };
+      wrap.append(text, btn);
+      return wrap;
+    }
+
+    if (options?.length) {
+      const sel = document.createElement('select');
+      sel.dataset.inputKey = key;
+      sel.setAttribute('aria-label', QTMode.GENERAL_LABELS[key] || label);
+      for (const opt of options) {
+        const o = document.createElement('option');
+        o.value = String(opt);
+        if(String(opt)==='AUTO'){o.hidden=true;o.disabled=true;o.label='NQ1!';}
+        o.textContent = key === 'm1Timing' ? String(opt).split(' (')[0] : String(opt);
+        if (key === 'm1Timing') o.title = String(opt);
+        sel.appendChild(o);
+      }
+      sel.value = String(val);
+      sel.onchange = () => {
+        target[key] = sel.value;
+        this.scheduleAll();
+      };
+      if(['symA','symB','symC'].includes(key))window.TerminalAssets?.decorateSelect(sel);
+      wrap.append(text, sel);
+      return wrap;
+    }
+
+    const inp = document.createElement('input');
+    inp.dataset.inputKey = key;
+    if (type === 'bool') {
+      inp.type = 'checkbox';
+      inp.checked = !!val;
+      inp.onchange = () => {
+        target[key] = inp.checked;
+        this.scheduleAll();
+      };
+      if (compact) wrap.append(inp, text);
+      else wrap.append(text, inp);
+      return wrap;
+    }
+
+    inp.type = (type === 'int' || type === 'float') ? 'number' : 'text';
+    inp.value = String(val ?? '');
+    if (inp.type === 'number') {
+      inp.step = step ?? (type === 'int' ? 1 : 'any');
+      if (min !== undefined) inp.min = min;
+      if (max !== undefined) inp.max = max;
+    }
+    inp.oninput = () => {
+      const next = (type === 'int' || type === 'float') ? Number(inp.value) : inp.value;
+      target[key] = next;
+      if (Number.isFinite(next) || (type !== 'int' && type !== 'float')) this.scheduleAll();
+    };
+    if(inp.type==='number'){
+      const field=document.createElement('div');field.className='qt-number-field';
+      const minus=document.createElement('button'),plus=document.createElement('button');
+      const sync=()=>{minus.disabled=inp.min!==''&&Number(inp.value)<=Number(inp.min);plus.disabled=inp.max!==''&&Number(inp.value)>=Number(inp.max);};
+      for(const [button,delta,glyph]of [[minus,-1,'−'],[plus,1,'+']]){
+        button.type='button';button.className='qt-number-step';
+        button.innerHTML='<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M4 8h8'+(delta>0?'M8 4v8':'')+'"/></svg>';
+        button.setAttribute('aria-label',(delta<0?'Decrease ':'Increase ')+label);
+        button.onclick=()=>{
+          const step=inp.step==='any'?.1:(Number(inp.step)||1),value=Number(inp.value)||0;
+          const min=inp.min===''?-Infinity:Number(inp.min),max=inp.max===''?Infinity:Number(inp.max);
+          inp.value=String(Math.max(min,Math.min(max,Number((value+delta*step).toFixed(8)))));
+          inp.dispatchEvent(new Event('input',{bubbles:true}));sync();
+        };
+      }
+      inp.addEventListener('input',sync);field.append(minus,inp,plus);sync();wrap.append(text,field);
+    }else wrap.append(text, inp);
+    return wrap;
+  }
+
+  _openColorPopover(button, swatch, key, label) {
+    this._openCustomColorPopover(
+      button,
+      swatch,
+      () => this._previewSettings[key] ?? QuantaibayEngine.DEFAULTS[key],
+      ({ hexAlpha }) => {
+        this._previewSettings[key] = hexAlpha;
+        this.scheduleAll();
+      },
+      label
+    );
+  }
+
+  _openCustomColorPopover(button, swatch, getValue, onValueChange, label) {
+    if (this.palette && this.paletteTarget === button) {
+      this._closePalette();
+      return;
+    }
+    this._closePalette();
+    const pop = document.createElement('div');
+    pop.className = 'tv-style-popover tv-indi-popover';
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', label + ' color');
+    this.palette = pop;
+    this.paletteTarget = button;
+    button.classList.add('active');
+
+    const current = getValue();
+    if (typeof ColorPicker !== 'undefined' && ColorPicker.mount) {
+      ColorPicker.mount(pop, {
+        value: current,
+        showOpacity: true,
+        onChange: ({ hexAlpha, css }) => {
+          swatch.style.background = css;
+          onValueChange({ hexAlpha, css });
+        }
+      });
+    } else {
+      const parsed = QuantaibayEngine.parseColor(current);
+      const cInp = document.createElement('input');
+      cInp.type = 'color';
+      cInp.value = parsed.hex;
+      cInp.oninput = () => {
+        const hexAlpha = cInp.value + 'ff';
+        swatch.style.background = cInp.value;
+        onValueChange({ hexAlpha, css: cInp.value });
+      };
+      pop.appendChild(cInp);
+    }
+
+    this.modal.appendChild(pop);
+    this._positionPalette();
+    if (typeof ResizeObserver !== 'undefined') {
+      this._paletteObserver = new ResizeObserver(() => this._positionPalette());
+      this._paletteObserver.observe(pop);
+    }
+  }
+}
+
+if (typeof window !== 'undefined') window.QTMode = QTMode;
+if (typeof module !== 'undefined') module.exports = QTMode;

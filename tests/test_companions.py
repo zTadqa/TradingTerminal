@@ -53,6 +53,43 @@ class CompanionTests(unittest.TestCase):
         event=normalize_events([{'title':'x','time':'2026-11-12T08:30:00Z','actual':'3.1%','status':'tentative'}])[0]
         self.assertEqual(event['actual'],'3.1%')
         self.assertTrue(event['tentative'])
+
+    def test_calendar_retains_and_persists_recent_past_events_across_restarts(self):
+        from datetime import datetime, timezone
+        ts=lambda s:datetime.fromisoformat(s.replace('Z','+00:00')).timestamp()
+        clock=[ts('2026-11-18T15:00:00Z')]
+        feeds=[
+            {'generated_at':'2026-11-18T15:00:00Z','events':[
+                {'title':'Old Release','time':'2026-10-28T13:30:00Z','currency':'USD','impact':'High'},
+                {'title':'FOMC Statement','time':'2026-11-18T19:00:00Z','currency':'USD','impact':'High','forecast':'4.50%'}]},
+            {'generated_at':'2026-11-19T15:00:00Z','events':[
+                {'title':'FOMC Statement','time':'2026-11-18T19:00:00Z','currency':'USD','impact':'High','actual':'4.50%'},
+                {'title':'Unemployment Claims','time':'2026-11-19T13:30:00Z','currency':'USD','impact':'High'}]},
+            {'generated_at':'2026-11-20T15:00:00Z','events':[
+                {'title':'Flash PMI','time':'2026-11-20T14:45:00Z','currency':'USD','impact':'High'}]},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            cache_file=Path(directory)/'calendar_cache.json'
+            first=EconomicCalendar(lambda:feeds[0],lambda:clock[0],history_path=cache_file)
+            res1=first.get()
+            self.assertEqual([e['title'] for e in res1['events']],['FOMC Statement'])
+            self.assertTrue(cache_file.exists())
+
+            clock[0]=ts('2026-11-19T15:00:00Z')
+            second=EconomicCalendar(lambda:feeds[1],lambda:clock[0],history_path=cache_file)
+            res2=second.get()
+            self.assertEqual([e['title'] for e in res2['events']],['FOMC Statement','Unemployment Claims'])
+            self.assertEqual(res2['events'][0]['actual'],'4.50%')
+
+            clock[0]=ts('2026-11-20T15:00:00Z')
+            third=EconomicCalendar(lambda:feeds[2],lambda:clock[0],history_path=cache_file)
+            res3=third.get()
+            self.assertEqual([e['title'] for e in res3['events']],['FOMC Statement','Unemployment Claims','Flash PMI'])
+
+            reloaded=EconomicCalendar(lambda:(_ for _ in ()).throw(OSError('offline')),lambda:clock[0],history_path=cache_file)
+            res4=reloaded.get()
+            self.assertEqual([e['title'] for e in res4['events']],['FOMC Statement','Unemployment Claims','Flash PMI'])
+            self.assertIn('offline',res4['error'])
     def test_metadata_is_limited_to_provider_endpoints(self):
         for url in ['file:///etc/passwd','https://127.0.0.1/','https://www.youtube.com.evil.test/x','https://user:secret@www.youtube.com/x','https://soundcloud.com:8000/x']:
             with self.assertRaises(ValueError):metadata_endpoint(url)
@@ -68,66 +105,50 @@ class CompanionTests(unittest.TestCase):
             def __exit__(self,*args):pass
             def send(self,value):messages.append(json.loads(value))
             def recv(self,**args):return json.dumps({'id':1,'result':{'result':{'value':[{'symbol':'ES1!','resolution':'5'}]}}})
-        with patch.object(bridge,'sync_connect',return_value=Socket()):
+        with patch.object(bridge,'sync_connect',return_value=Socket()) as connect:
             self.assertEqual(bridge.source_pairs({'type':'page','url':'https://www.tradingview.com/chart/user/','webSocketDebuggerUrl':'ws://local'}),{('ES1!','5m')})
+        self.assertEqual(connect.call_args.kwargs['max_size'],20 * 1024 * 1024)
         self.assertNotIn('window.open',messages[0]['params']['expression']);self.assertNotIn('setResolution',messages[0]['params']['expression'])
 
 class SourceLoopTests(unittest.IsolatedAsyncioTestCase):
-    async def test_only_opens_missing_pair_when_existing_marker_has_different_interval(self):
-        import asyncio, io
-        from unittest.mock import AsyncMock, MagicMock
-
-        targets = [
-            {'id':'nq', 'type':'page', 'url':'https://www.tradingview.com/chart/user/', 'webSocketDebuggerUrl':'ws://nq'},
-            {'id':'es', 'type':'page', 'url':'https://www.tradingview.com/chart/?terminal_live=ES1%21%3A1m', 'webSocketDebuggerUrl':'ws://es'},
-        ]
-        pairs = {'ws://nq':{('NQ1!','1m')}, 'ws://es':{('ES1!','1h')}}
-        active = []
-        async def poll(url, pair):
-            active.append((url, pair))
-            await asyncio.Event().wait()
-
-        real_sleep = asyncio.sleep
-        iterations = 0
-        async def pause(seconds):
-            nonlocal iterations
-            iterations += 1
-            await real_sleep(0)
-            if iterations == 2:
-                raise asyncio.CancelledError()
-
-        connection = MagicMock()
-        connection.recv.return_value = '{}'
-        with patch.object(bridge,'subscriptions',{1:{('NQ1!','1m'),('ES1!','1m')}}), \
-             patch.object(bridge,'urlopen',side_effect=lambda *a,**kw:io.BytesIO(json.dumps(targets).encode())), \
-             patch.object(bridge,'source_pairs',side_effect=lambda t:pairs[t['webSocketDebuggerUrl']]), \
-             patch.object(bridge,'poll_source',side_effect=poll), \
-             patch.object(bridge,'sync_connect',return_value=MagicMock(__enter__=MagicMock(return_value=connection))), \
-             patch.object(bridge.asyncio,'to_thread',new=AsyncMock(side_effect=lambda fn:fn())), \
-             patch.object(bridge.asyncio,'sleep',side_effect=pause):
-            with self.assertRaises(asyncio.CancelledError):
-                await bridge.automatic_sources()
-
-        self.assertEqual(active,[('ws://nq',('NQ1!','1m'))])
-        connection.send.assert_called_once()
-        self.assertIn('terminal_live=ES1%21%3A1m',connection.send.call_args.args[0])
-
-    async def test_reuses_manual_sources_after_ui_disconnect_without_opening_tabs(self):
+    async def exercise(self, subscriptions, actual, setup=False):
         import asyncio, io
         from unittest.mock import AsyncMock
-        pairs={('NQ1!','1m'),('ES1!','5m'),('YM1!','15m')}
-        targets=[{'type':'page','url':'https://www.tradingview.com/chart/user'+str(i)+'/', 'webSocketDebuggerUrl':'ws://'+str(i)} for i in range(3)]
-        lookup={target['webSocketDebuggerUrl']:pair for target,pair in zip(targets,sorted(pairs))}
-        active=[];sleep=asyncio.sleep;iterations=[0]
-        async def poll(url,pair):
-            active.append((url,pair))
-            await asyncio.Event().wait()
-        async def pause(seconds):
-            iterations[0]+=1
-            await sleep(0)
-            if iterations[0]==1:bridge.subscriptions.clear()
-            else:raise asyncio.CancelledError()
-        with patch.object(bridge,'subscriptions',{1:pairs}),patch.object(bridge,'last_requests',pairs),patch.object(bridge,'urlopen',side_effect=lambda *a,**kw:io.BytesIO(json.dumps(targets).encode())),patch.object(bridge,'source_pairs',side_effect=lambda t:{lookup[t['webSocketDebuggerUrl']]}),patch.object(bridge,'poll_source',side_effect=poll),patch.object(bridge,'sync_connect',side_effect=AssertionError('Must not open or navigate')),patch.object(bridge.asyncio,'to_thread',new=AsyncMock(side_effect=lambda fn:fn())),patch.object(bridge.asyncio,'sleep',side_effect=pause):
+        targets=[{'id':'main','type':'page','url':'https://www.tradingview.com/chart/user/','webSocketDebuggerUrl':'ws://main'},
+                 {'id':'old','type':'page','url':'https://www.tradingview.com/chart/?terminal_live=ES1%21%3A1m','webSocketDebuggerUrl':'ws://old'}]
+        active=[];real_sleep=asyncio.sleep;iterations=0
+        async def poll(url,expected=None):
+            active.append((url,expected));await asyncio.Event().wait()
+        async def pause(awaitable, timeout=None):
+            nonlocal iterations
+            if hasattr(awaitable,'close'):awaitable.close()
+            iterations+=1
+            await real_sleep(0)
+            if iterations==2:raise asyncio.CancelledError()
+            raise asyncio.TimeoutError()
+        ensure=AsyncMock(return_value={'created':[]})
+        with patch.object(bridge,'subscriptions',subscriptions),patch.object(bridge,'last_requests',set()), \
+             patch.object(bridge,'urlopen',side_effect=lambda *a,**kw:io.BytesIO(json.dumps(targets).encode())), \
+             patch.object(bridge,'source_pairs',side_effect=lambda t:actual if t['id']=='main' else {('ES1!','1m')}), \
+             patch.object(bridge,'poll_source',side_effect=poll), \
+             patch.object(bridge,'evaluate_target',return_value={'created':[]}) as configure, \
+             patch.object(bridge.asyncio,'to_thread',new=AsyncMock(side_effect=lambda fn,*args:fn(*args))), \
+             patch.object(bridge.asyncio,'wait_for',side_effect=pause):
             with self.assertRaises(asyncio.CancelledError):await bridge.automatic_sources()
-        self.assertEqual({pair for _,pair in active},pairs)
-        self.assertEqual(len(active),3)
+            self.assertEqual(configure.call_count,1 if setup else 0)
+            if setup:self.assertIn('addOverlayStudy',configure.call_args.args[1])
+        self.assertEqual(active,[('ws://main',None)])
+
+    async def test_three_symbols_share_one_reader_and_never_create_a_tab(self):
+        pairs={('NQ1!','1m'),('ES1!','1m'),('YM1!','1m')}
+        await self.exercise({1:pairs},pairs)
+
+    async def test_missing_peers_are_added_once_with_backoff(self):
+        await self.exercise({1:{('NQ1!','1m'),('ES1!','1m')}},{('NQ1!','1m')},True)
+
+    async def test_disconnected_ui_does_not_change_source_or_add_panes(self):
+        await self.exercise({}, {('NQ1!','1m')})
+
+    async def test_mixed_timeframes_do_not_open_more_tabs(self):
+        pairs={('NQ1!','1m'),('ES1!','1m'),('YM1!','1m')}
+        await self.exercise({1:{('NQ1!','1m'),('ES1!','5m')}},pairs)

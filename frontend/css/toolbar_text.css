@@ -1,0 +1,15 @@
+/* Text sizing is independent of toolbar/icon scale. */
+:root { --toolbar-text-scale:1; }
+#topbar :is(.tf-btn,#timeframe-menu-button,#active-symbol-title,#btn-indicator),
+#timeframe-menu .tf-btn,#fullscreen-timeframe .tf-btn {
+ font-size:calc(12px * var(--toolbar-text-scale)) !important;
+}
+#topbar .tv-trade-pill :is(.trade-sell,.trade-buy) span { font-size:calc(10px * var(--toolbar-text-scale)) !important; }
+#topbar .tv-trade-pill :is(.trade-sell,.trade-buy) span[id^=price-] { font-size:calc(9.5px * var(--toolbar-text-scale)) !important; }
+#topbar #connection-status { font-size:calc(12px * var(--toolbar-text-scale)) !important; }
+#topbar .dock-clock #live-clock { font-size:calc(15px * var(--toolbar-text-scale)) !important; }
+#topbar .dock-clock .dock-tz { font-size:calc(10px * var(--toolbar-text-scale)) !important; }
+.drawing-toolbar .tv-tb-btn.tv-tb-wide { font-size:calc(12.5px * var(--toolbar-text-scale)); }
+#replay-toolbar :is(button:not(.replay-play),select,summary,input),
+#replay-toolbar :is(#replay-position,.replay-timeframe) { font-size:calc(12px * var(--toolbar-text-scale)) !important; }
+#replay-toolbar .replay-badge { font-size:calc(10.5px * var(--toolbar-text-scale)); }

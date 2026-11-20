@@ -1,0 +1,10 @@
+/* Stable right-rail hit targets: hover never moves adjacent buttons. */
+html body:not(.reduce-motion) #right-sidebar > button,
+html body:not(.reduce-motion) #right-sidebar #terminal-edge-dock .edge-handle,
+html body #right-sidebar > button,
+html body #right-sidebar #terminal-edge-dock .edge-handle{transform:none!important;translate:none!important;scale:1!important;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease!important}
+html body #right-sidebar::before{transform:none!important;transition:none!important}
+html body #right-sidebar :is(button.active,.edge-handle[aria-expanded=true]){outline:none!important;box-shadow:0 2px 7px color-mix(in srgb,var(--accent) 22%,transparent)!important}
+html body #right-sidebar :is(button[data-panel],.edge-handle):focus-visible{outline:1px solid var(--accent)!important;outline-offset:-2px!important}
+/* right is inside the zoomed panel; compensate so the gutter is physical pixels. */
+html body #desktop-panel:is([data-mode=objects],[data-mode=alerts],[data-mode=watch]){right:calc((30px + 64px * var(--toolbar-scale,1) + var(--panel-paper-offset,0px)) / var(--toolbar-scale,1))!important;z-index:220!important;isolation:isolate}

@@ -6,16 +6,56 @@ function create(stored=new Map(),canWrite=true){
  vm.runInContext(fs.readFileSync('frontend/js/toolbar_clusters.js','utf8')+';this.Clusters=ToolbarClusters;',context);
  const controller=new context.Clusters(()=>opened++);return {controller,element,styles,hotkey,get opened(){return opened;},stored};
 }
-test('floating cluster visibility and background transparency persist; shortcut recovers Settings with all clusters hidden',()=>{
- const first=create();
- for(const key of Object.keys(first.controller.elements))first.element('set-show-'+key).events.change({target:{checked:false}});
- first.element('set-toolbar-opacity').events.input({target:{value:'65'}});assert.equal(first.styles.get('--toolbar-opacity'),'0.35');
- const reopened=create(first.stored);assert.equal(reopened.styles.get('--toolbar-opacity'),'0.35');for(const e of Object.values(reopened.controller.elements))assert.equal(e.hidden,true);
- let prevented=false;reopened.hotkey({ctrlKey:true,code:'Comma',preventDefault(){prevented=true;},stopPropagation(){}});assert.equal(reopened.opened,1);assert.equal(prevented,true);
- reopened.element('set-show-topRight').events.change({target:{checked:true}});assert.equal(reopened.controller.elements.topRight.hidden,false);assert.equal(reopened.controller.elements.topLeft.hidden,true);
+test('pinned chrome ignores legacy hidden/transparent settings without overwriting them',()=>{
+ const initial=new Map([['terminal_cluster_visibility_v2',{topLeft:false,topRight:false,sidebar:false}],['terminal_toolbar_opacity_v1',0]]),snapshot=structuredClone(initial),h=create(initial);
+ for(const [key,e]of Object.entries(h.controller.elements)){assert.equal(e.hidden,false);assert.equal(h.element('set-show-'+key).checked,true);assert.equal(h.element('set-show-'+key).disabled,true);}
+ assert.equal(h.styles.get('--toolbar-opacity'),'1');assert.equal(h.element('set-toolbar-opacity').disabled,true);assert.equal(h.element('set-toolbar-opacity').value,0);assert.deepEqual(initial,snapshot);
 });
-test('failed saves restore controls to the last persisted value instead of reporting unsaved preferences as saved',()=>{
- const initial=new Map([['terminal_cluster_visibility_v2',{topLeft:false}],['terminal_toolbar_opacity_v1',40]]),h=create(initial,false);
- h.element('set-show-topLeft').events.change({target:{checked:true}});assert.equal(h.controller.elements.topLeft.hidden,true);assert.equal(h.element('set-show-topLeft').checked,false);
- h.element('set-toolbar-opacity').events.input({target:{value:'100'}});assert.equal(h.element('set-toolbar-opacity').value,60);assert.equal(h.styles.get('--toolbar-opacity'),'0.4');
+test('Settings shortcut remains available when storage cannot be written',()=>{
+ const h=create(new Map(),false);let prevented=false;
+ h.hotkey({ctrlKey:true,code:'Comma',preventDefault(){prevented=true;},stopPropagation(){}});
+ assert.equal(h.opened,1);assert.equal(prevented,true);assert.equal(h.controller.elements.sidebar.hidden,false);
+});
+test('toolbar scale clamps, persists, updates --toolbar-scale live and resets cleanly',()=>{
+ const stored=new Map(),styles=new Map();let fitted=0,badged=0;
+ const mk=tag=>({tag,dataset:{},children:[],attrs:{},events:{},classList:{toggle(){}},style:{},append(...ns){for(const n of ns){if(n&&typeof n==='object')n.parentElement=this;this.children.push(n);}},appendChild(n){if(n&&typeof n==='object')n.parentElement=this;this.children.push(n);return n;},prepend(n){if(n&&typeof n==='object')n.parentElement=this;this.children.unshift(n);},remove(){},querySelector(){return null;},querySelectorAll(){return [];},setAttribute(k,v){this.attrs[k]=v;},addEventListener(t,f){this.events[t]=f;}});
+ const help=mk('p');
+ const old=mk('details');old.children.push(help);
+ const modal=mk('div');modal.querySelector=sel=>sel==='.toolbar-settings'?old:null;
+ const ctx=vm.createContext({
+  TerminalFeatures:function(){},
+  Workspace:{read:(k,f)=>stored.has(k)?stored.get(k):f,write:(k,v)=>{stored.set(k,v);return true;}},
+  document:{createElement:tag=>{const e=mk(tag);e.querySelector=sel=>sel==='.editor-help'?help:null;return e;},body:mk('body'),documentElement:{style:{setProperty:(k,v)=>styles.set(k,v)}},querySelector:()=>null,querySelectorAll:()=>[],addEventListener(){}}
+ });
+ vm.runInContext(fs.readFileSync('frontend/js/terminal_polish.js','utf8'),ctx);
+ assert.equal(ctx.TerminalFeatures.clampToolbarScale(undefined),85);
+ assert.equal(ctx.TerminalFeatures.clampToolbarScale(42),60);
+ assert.equal(ctx.TerminalFeatures.clampToolbarScale(180),125);
+ assert.equal(ctx.TerminalFeatures.clampToolbarScale(78),80);
+ const chartSettings={modal,dialog:mk('div')};
+ ctx.TerminalFeatures.prototype.installPolish.call({chartSettings,desktop:{fitToolbar(){fitted++;}},charts:[{positionSymbolBadge(){badged++;}}]});
+ assert.equal(styles.get('--toolbar-scale'),'0.85');
+ const scaleRow=chartSettings.toolbarControls.children[0];
+ const scaleWrap=scaleRow.children[1],scaleInput=scaleWrap.children[0],scaleOut=scaleWrap.children[1];
+ assert.equal(scaleInput.id,'set-toolbar-scale');
+ assert.equal(scaleOut.textContent,'85%');
+ scaleInput.value='72';scaleInput.oninput();
+ assert.equal(styles.get('--toolbar-scale'),'0.70');
+ assert.equal(stored.get('terminal_toolbar_scale_v1'),70);
+ assert.equal(scaleOut.textContent,'70%');
+ assert.ok(fitted>=2&&badged>=2);
+ chartSettings.onToolbarReset();
+ assert.equal(styles.get('--toolbar-scale'),'0.85');
+ assert.equal(stored.get('terminal_toolbar_scale_v1'),85);
+});
+test('QT browser scripts never throw ReferenceError when loaded out-of-order or without Node require',()=>{
+ for(const file of ['frontend/js/qt_cycles_trueopen.js','frontend/js/qt_ssmt.js','frontend/js/qt_psp.js','frontend/js/qt_engine.js']){
+  const browserCtx=vm.createContext({window:{}});
+  assert.doesNotThrow(()=>vm.runInContext(fs.readFileSync(file,'utf8'),browserCtx),file+' threw without require/QTCore');
+ }
+ const html=fs.readFileSync('frontend/index.html','utf8');
+ assert.match(html,/#chart-grid:not\(\.terminal-layout\)\s*>\s*\.chart-wrapper:nth-of-type\(n\+4\)/);
+ assert.match(html,/node\.hidden=true;node\.style\.display='none'/);
+ assert.match(html,/Workspace\.read\(storageKey,\s*true\)\s*!==\s*false/);
+ assert.match(html,/location\.protocol\s*===\s*'file:'/);
 });

@@ -1,0 +1,37 @@
+.liquid-source{opacity:0!important;pointer-events:none!important;scale:var(--toolbar-scale,1)!important}
+.liquid-source *{pointer-events:none!important}
+.terminal-liquid-host{position:fixed;z-index:130;pointer-events:none;overflow:visible}
+.terminal-liquid-host[hidden]{display:none}
+.terminal-liquid-stage{height:78px;position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:auto}
+.terminal-liquid-host .curved-nav{position:relative;height:78px;width:100%;isolation:isolate;--tile:color-mix(in srgb,var(--text) 6%,var(--bg));--circle-top:var(--accent);--circle-bottom:var(--accent)}
+.terminal-liquid-host .bar-surface{position:absolute;inset:0;overflow:visible;pointer-events:none;z-index:0;filter:drop-shadow(0 6px 8px #0003)}
+.terminal-liquid-host .bar-surface path{fill:var(--bg)}
+.terminal-liquid-host .tile-track,.terminal-liquid-host .item-track{position:absolute;inset:0;height:78px;display:grid;align-items:center;box-sizing:border-box}
+.terminal-liquid-host .tile-track{z-index:1;pointer-events:none}
+.terminal-liquid-host .item-track{z-index:2}
+.terminal-liquid-host .tool-tile{width:calc(100% - 6px);height:58px;border-radius:20px;margin:auto;background:var(--tile)}
+.terminal-liquid-host .tool-tile.selected{background:transparent}
+.terminal-liquid-host .tool-button{display:flex;align-items:center;justify-content:center;position:relative;width:calc(100% - 6px);height:58px;margin:auto;padding:0;border:0;border-radius:20px;background:transparent;color:var(--muted);cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent}
+.terminal-liquid-host .tool-button:hover{color:var(--text)}
+.terminal-liquid-host .tool-button:focus-visible{outline:2px solid var(--accent);outline-offset:-4px}
+.terminal-liquid-host .icon-wrap{position:relative;display:inline-flex}
+.terminal-liquid-host .floating-position{position:absolute;left:0;top:-30px;width:60px;height:60px;pointer-events:none;z-index:3;will-change:transform}
+.terminal-liquid-host .floating-circle{width:60px;height:60px;border-radius:50%;border:0;box-shadow:none;background:var(--accent);transform-origin:center;will-change:transform;backface-visibility:hidden}
+.terminal-liquid-host .floating-glyph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--accent-ink);transform-origin:center;will-change:transform}
+.terminal-liquid-host .floating-glyph>span{position:relative;display:flex}
+.terminal-liquid-host .particle-layer{position:absolute;left:-120px;top:-90px;z-index:4;pointer-events:none;contain:strict}
+.terminal-liquid-host .home-indicator{display:none}
+.terminal-liquid-host .badge{position:absolute;right:-8px;top:-6px;font-size:10px;background:var(--accent);color:var(--accent-ink);border-radius:20px}
+.terminal-liquid-host.vertical .icon-wrap svg,.terminal-liquid-host.vertical .floating-glyph svg{rotate:90deg}
+.terminal-liquid-host .tool-button svg{width:27px;height:27px;display:block;pointer-events:none}
+body:has(#replay-toolbar.show) .terminal-liquid-host.horizontal{display:none}
+@media(prefers-reduced-motion:reduce){.terminal-liquid-host *{transition:none!important}}
+
+.terminal-liquid-host .floating-glyph svg{width:27px;height:27px;display:block}
+
+html body :is(#left-sidebar,#right-sidebar).liquid-source{opacity:0!important;pointer-events:none!important}
+html body :is(#left-sidebar,#right-sidebar).liquid-source *{pointer-events:none!important}
+.terminal-liquid-host{z-index:199}
+
+.terminal-liquid-host.edge-hidden{opacity:0;pointer-events:none}
+.terminal-liquid-host.edge-hidden .terminal-liquid-stage{pointer-events:none}
